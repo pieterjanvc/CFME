@@ -1,0 +1,198 @@
+---
+title: "Core Faculty Model Evaluation - Data Exploration"
+format: html
+execute:
+  echo: false
+---
+
+```{r, include = FALSE}
+library(dplyr)
+library(readxl)
+library(htmltools)
+library(ggplot2)
+require(kableExtra)
+
+data <- read_excel(
+  "data/BIDMC_Med_Neuro_SPE_Comments_Dataset_07242025.xlsx",
+  1
+) |>
+  mutate(
+    ROTATION_DATE = as.Date(ROTATION_DATE, format = "%m/%d/%Y"),
+    qID = as.factor(QUESTION) |> as.integer(),
+    qSummative = qID < 3
+  )
+dict <- read_excel("data/BIDMC_Med_Neuro_SPE_Comments_Dataset_07242025.xlsx", 2)
+```
+
+# About the data
+This dataset was collected from the Harvard Medical School's medical education
+program clinical rotations in Neurology and contains the written student 
+evaluations by the Faculty.
+
+<blockquote>NOTE: This document does not contain any sensitive information, only summary 
+statistics</blockquote>
+
+# Basic info about the data
+
+```{r}
+tags$ul(
+  tags$li("Number of students:", n_distinct(data$LEARNER_ANON_ID)),
+  tags$li("Number of faculty:", n_distinct(data$EVALUATOR_ID)),
+  tags$li(
+    "Clerkships evaluated:",
+    paste(unique(data$CLERKSHIP) |> sort(), collapse = ", ")
+  ),
+  tags$li(
+    "Hospital locations:",
+    paste(unique(data$LOCATION) |> sort(), collapse = ", ")
+  ),
+  tags$li(
+    "Academic Years:",
+    paste(unique(data$ACAD_YR) |> sort(), collapse = ", ")
+  ),
+  tags$li(
+    sprintf(
+      "Total number of evaluations: %i of which %i are summaries",
+      n_distinct(data$ROWID),
+      sum(data$SUMMARY_FLG == "Y")
+    )
+  )
+)
+```
+
+The data is stored in an Excel file that contain the following column information:
+```{r, results = 'asis'}
+half <- ceiling(length(dict$DEFINITION) / 2)
+
+tags$table(tags$tr(
+  tags$td(tags$ul(lapply(dict$DEFINITION[1:half], tags$li))),
+  tags$td(tags$ul(lapply(
+    dict$DEFINITION[(half + 1):length(dict$DEFINITION)],
+    tags$li
+  )))
+))
+```
+
+# Student demographics
+```{r}
+data |>
+  group_by(LEARNER_ANON_ID) |>
+  slice(1) |>
+  group_by(GENDER, ACAD_PROG_TRK) |>
+  summarise(
+    n = n(),
+    mean_age = sprintf(
+      "%.0f (\u00B1%.1f)",
+      mean(AGE),
+      ifelse(is.na(sd(AGE)), 0, sd(AGE))
+    ),
+    .groups = "drop"
+  ) |>
+  kableExtra::kable()
+```
+
+# By year
+```{r}
+data |>
+  group_by(ACAD_YR) |>
+  summarise(
+    dates = sprintf("%s - %s", min(ROTATION_DATE), max(ROTATION_DATE)),
+    nStudents = n_distinct(LEARNER_ANON_ID),
+    nEvals = n(),
+    nSummaries = sum(SUMMARY_FLG == "Y"),
+    .groups = "drop"
+  ) |>
+  kableExtra::kable()
+```
+
+# Data distribution
+## Number of evaluations per student for completed academic years
+```{r}
+result <- data |>
+  group_by(LEARNER_ANON_ID, CLERKSHIP, ACAD_PROG_TRK) |>
+  summarise(
+    ACAD_YR = unique(ACAD_YR),
+    nEval = n(),
+    nSummary = n_distinct(SUMMARY_FLG),
+    nFaculty = n_distinct(EVALUATOR_ID),
+    .groups = "drop"
+  )
+
+ggplot(
+  result |> filter(ACAD_YR < max(ACAD_YR)),
+  aes(x = nEval, fill = CLERKSHIP)
+) +
+  geom_histogram(binwidth = 1) +
+  labs(
+    title = NULL,
+    x = "Number of evaluations"
+  ) +
+  theme_minimal()
+
+```
+
+## Average number of evaluations per faculty for completed academic years
+```{r}
+result <- data |>
+  filter(ACAD_YR < max(ACAD_YR)) |>
+  group_by(ACAD_YR, EVALUATOR_ID) |>
+  summarise(
+    nStudents = n_distinct(LEARNER_ANON_ID),
+    nEvals = n() / n_distinct(ACAD_YR),
+    nSummary = n_distinct(SUMMARY_FLG),
+    .groups = "drop"
+  )
+
+ggplot(result, aes(x = nEvals)) +
+  geom_histogram(bins = 50) +
+  scale_x_log10(breaks = c(1, 2, 3, 5, 10, 25, 50, 100, max(result$nEvals))) +
+  labs(
+    title = NULL,
+    x = "Number of evaluations  (log scale!)"
+  ) +
+  theme_minimal()
+```
+
+# Written Feedback Statistics
+
+The following table list the questions used as a prompt for the evaluations. 
+The number of times this question has been answered in the dataset for a 
+completed academic year is provided as well.
+
+<blockquote>NOTE: The first two question are only answered by faculty who do a summative evaluation</blockquote>
+
+```{r}
+data |>
+  filter(ACAD_YR < max(ACAD_YR)) |>
+  group_by(QUESTION) |>
+  summarise(timesAnswered = n(), .groups = "drop") |>
+  arrange(timesAnswered) |>
+  kableExtra::kable()
+```
+
+## Number of questions completed per faculty member for a student
+```{r}
+result <- data |>
+  filter(ACAD_YR < max(ACAD_YR)) |>
+  group_by(qSummative, LEARNER_ANON_ID, EVALUATOR_ID) |>
+  summarise(nAnswered = n_distinct(qID), .groups = "drop")
+
+group_labels <- c(
+  "TRUE" = "Summative eval",
+  "FALSE" = "Regular eval"
+)
+
+ggplot(result, aes(x = nAnswered)) +
+  geom_histogram(binwidth = 1) +
+  facet_wrap(
+    ~qSummative,
+    scales = "free",
+    labeller = as_labeller(group_labels)
+  ) +
+  scale_x_continuous(breaks = function(x) floor(min(x)):ceiling(max(x))) +
+  labs(
+    title = NULL,
+    x = "Number of questions"
+  ) +
+  theme_minimal()
+```
