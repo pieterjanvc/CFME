@@ -7,6 +7,8 @@ execute:
 
 ```{r, include = FALSE}
 library(dplyr)
+library(stringr)
+library(tidyr)
 library(readxl)
 library(htmltools)
 library(ggplot2)
@@ -26,7 +28,7 @@ dict <- read_excel("data/BIDMC_Med_Neuro_SPE_Comments_Dataset_07242025.xlsx", 2)
 
 # About the data
 This dataset was collected from the Harvard Medical School's medical education
-program clinical rotations in Neurology and contains the written student 
+program clinical rotations and contains the written student 
 evaluations by the Faculty.
 
 <blockquote>NOTE: This document does not contain any sensitive information, only summary 
@@ -88,6 +90,13 @@ data |>
     ),
     .groups = "drop"
   ) |>
+  mutate(
+    n = sprintf(
+      "%i (%.1f%%)",
+      n,
+      n / sum(n) * 100
+    )
+  ) |>
   kableExtra::kable()
 ```
 
@@ -122,7 +131,7 @@ ggplot(
   result |> filter(ACAD_YR < max(ACAD_YR)),
   aes(x = nEval, fill = CLERKSHIP)
 ) +
-  geom_histogram(binwidth = 1) +
+  geom_histogram(binwidth = 1, color = "white") +
   labs(
     title = NULL,
     x = "Number of evaluations"
@@ -131,7 +140,7 @@ ggplot(
 
 ```
 
-## Average number of evaluations per faculty for completed academic years
+## Average number of evaluations per faculty for a completed academic year
 ```{r}
 result <- data |>
   filter(ACAD_YR < max(ACAD_YR)) |>
@@ -144,7 +153,7 @@ result <- data |>
   )
 
 ggplot(result, aes(x = nEvals)) +
-  geom_histogram(bins = 50) +
+  geom_histogram(bins = 50, color = "white") +
   scale_x_log10(breaks = c(1, 2, 3, 5, 10, 25, 50, 100, max(result$nEvals))) +
   labs(
     title = NULL,
@@ -155,18 +164,33 @@ ggplot(result, aes(x = nEvals)) +
 
 # Written Feedback Statistics
 
-The following table list the questions used as a prompt for the evaluations. 
-The number of times this question has been answered in the dataset for a 
-completed academic year is provided as well.
+The following table list the questions used as a prompt for the evaluations and a 
+few basic metrics.
 
 <blockquote>NOTE: The first two question are only answered by faculty who do a summative evaluation</blockquote>
 
 ```{r}
 data |>
-  filter(ACAD_YR < max(ACAD_YR)) |>
+  mutate(
+    nChar = nchar(ANSWER_TXT),
+    nWords = str_count(ANSWER_TXT, "[\\w+\\-']+")
+  ) |>
   group_by(QUESTION) |>
-  summarise(timesAnswered = n(), .groups = "drop") |>
-  arrange(timesAnswered) |>
+  summarise(
+    n = n(),
+    `average_nChar` = sprintf(
+      "%.0f (\u00B1%.0f)",
+      mean(nChar),
+      sd(nChar)
+    ),
+    `average_nWords` = sprintf(
+      "%.0f (\u00B1%.0f)",
+      mean(nWords),
+      sd(nWords)
+    ),
+    .groups = "drop"
+  ) |>
+  arrange(n) |>
   kableExtra::kable()
 ```
 
@@ -183,7 +207,7 @@ group_labels <- c(
 )
 
 ggplot(result, aes(x = nAnswered)) +
-  geom_histogram(binwidth = 1) +
+  geom_histogram(binwidth = 1, color = "white") +
   facet_wrap(
     ~qSummative,
     scales = "free",
@@ -196,3 +220,37 @@ ggplot(result, aes(x = nAnswered)) +
   ) +
   theme_minimal()
 ```
+
+# Most common words
+Below is a list of the 30 most commonly used words longer than 5 characters
+```{r}
+words <- data$ANSWER_TXT |>
+  str_extract_all("[\\w+\\-']+") |>
+  unlist() |>
+  tolower() |>
+  table()
+
+words <- data.frame(
+  words = names(words),
+  n = as.integer(words)
+)
+
+multiCol <- function(df, n_col, n_row) {
+  if (exists("n_row")) {
+    df <- df[1:(min(n_row * n_col, nrow(df))), ]
+  } else {
+    n_row <- ceiling(nrow(df) / n_col)
+  }
+
+  df <- lapply(seq(1, nrow(df), by = n_row), function(i) {
+    df[i:(i + n_row - 1), ]
+  })
+
+  do.call(cbind, df)
+}
+
+words <- words |> filter(nchar(words) > 5) |> arrange(desc(n))
+
+multiCol(words, n_col = 3, n_row = 10) |> kable()
+```
+
