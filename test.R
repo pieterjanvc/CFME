@@ -24,6 +24,7 @@ llm_call <- function(user, system, model, maxTokens, version, endpoint) {
     max_tokens = maxTokens
   )
 
+  # Send the request
   req <- request(baseURL) |>
     req_headers(
       "Content-Type" = "application/json",
