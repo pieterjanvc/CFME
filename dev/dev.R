@@ -2,6 +2,7 @@ library(dplyr)
 library(readxl)
 library(stringr)
 library(sqlife)
+# devtools::install_github("pieterjanvc/sqlife", ref = "data_manipulation")
 
 # Create a prompt to evaluate the reviews according to the rubric
 data <- read_xlsx("local/BIDMC_Med_Neuro_SPE_Comments_Dataset_07242025.xlsx", 1)
