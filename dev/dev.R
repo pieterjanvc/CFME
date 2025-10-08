@@ -49,3 +49,25 @@ sysPrompt <- readLines("inst/rubricPrompt.txt") |> paste(collapse = "\n")
 prompt <- paste(sysPrompt, "#EVALUATION\n\n", data$answer_txt[1])
 resp <- llm_call(prompt, log = "local/apiLog.csv")
 resp$choices[[1]]$message$content |> cat()
+
+
+result <- dbSetup("local/cfme.db", "inst/cfme.sql", validateSchema = F)
+conn <- dbGetConn("local/cfme.db")
+
+test <- tbl(conn, "evals") |> collect()
+test <- test |>
+  # filter(learner_anon_id == learner_anon_id[1]) |>
+  group_by(submission_date, evaluator_id, learner_anon_id) |>
+  mutate(eval_id = cur_group_id()) |>
+  ungroup()
+
+test |> group_by(learner_anon_id) |> filter(n_distinct(first_nbme_score) > 1)
+
+
+combined_data <- read_xlsx(
+  "local/BIDMC_Med_Neuro_SPE_Comments_Dataset_07242025.xlsx",
+  1
+)
+dbInfo <- "local/dev.db"
+
+addDataToDB(combined_data, dbInfo)
