@@ -64,10 +64,32 @@ test <- test |>
 test |> group_by(learner_anon_id) |> filter(n_distinct(first_nbme_score) > 1)
 
 
-combined_data <- read_xlsx(
+combined_data <- readxl::read_xlsx(
   "local/BIDMC_Med_Neuro_SPE_Comments_Dataset_07242025.xlsx",
   1
 )
 dbInfo <- "local/dev.db"
 
 addDataToDB(combined_data, dbInfo)
+shell.exec(dbInfo)
+
+tbl(conn, "answer") |>
+  inner_join(
+    tbl(conn, "evaluation") |>
+      select(id, summary_flg),
+    by = c("evaluation_id" = "id")
+  ) |>
+  group_by(evaluation_id, summary_flg) |>
+  summarise(n = n(), .groups = "drop") |>
+  select(-evaluation_id) |>
+  distinct()
+
+
+test <- data |>
+  group_by(
+    rotation_id,
+    reviewer_id,
+    summary_flg,
+    acad_yr
+  ) |>
+  summarise(n = n(), firstRow = rowid[1], .groups = "drop")
