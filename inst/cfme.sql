@@ -60,3 +60,36 @@ CREATE TABLE "answer" (
   FOREIGN KEY ("evaluation_id") REFERENCES "evaluation"("id") ON DELETE CASCADE,
   FOREIGN KEY ("question_id") REFERENCES "question"("id") ON DELETE CASCADE
 );
+
+CREATE TABLE "llm_prompt" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "timestamp" TEXT DEFAULT (datetime('now')),
+  "hash" TEXT UNIQUE NOT NULL,
+  "text" TEXT
+);
+
+CREATE TABLE "llm_response" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "timestamp" TEXT DEFAULT (datetime('now')),
+  "evaluation_id" INTEGER NOT NULL,
+  "prompt_id" INTEGER NOT NULL,
+  "model" TEXT,
+  "includes_questions" INTEGER,
+  "redacted" INTEGER,
+  "statusCode" INTEGER,
+  "tokens_in" INTEGER,
+  "tokens_out" INTEGER,
+  FOREIGN KEY ("evaluation_id") REFERENCES "evaluation"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("prompt_id") REFERENCES "llm_prompt"("id") ON DELETE CASCADE
+);
+
+CREATE TABLE "llm_evaluation" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "llm_response_id" INTEGER NOT NULL,
+  "competency_id" INTEGER NOT NULL,
+  "specificity" INTEGER NOT NULL,
+  "utility" INTEGER NOT NULL,
+  "sentiment" INTEGER NOT NULL,
+  "text_matches" TEXT,
+  FOREIGN KEY ("llm_response_id") REFERENCES "llm_response"("id") ON DELETE CASCADE
+);

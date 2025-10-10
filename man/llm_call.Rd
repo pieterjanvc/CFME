@@ -13,7 +13,7 @@ llm_call(user, system, model, maxTokens, version, endpoint, log)
 
 \item{model}{Default = gpt-4o-1120. LLM model to use}
 
-\item{maxTokens}{Default = 250. Max Number of tokens to return}
+\item{maxTokens}{Default = 500. Max Number of tokens to return}
 
 \item{version}{Default = 2024-10-21.}
 
@@ -28,5 +28,7 @@ If a log file is et a line is added to a CSV file with columns
 timestamp, promptTokens and responseTokens (headers not included)
 }
 \description{
-Call an Azure LLM
+Note that this function expects an environment variable HMS_AZURE_API
+that contains the API key You can set this up using
+\code{Sys.setenv(HMS_AZURE_API = "API token here")}
 }
