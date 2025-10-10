@@ -37,6 +37,8 @@ CREATE TABLE "evaluation" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "rotation_id" INTEGER NOT NULL,
   "reviewer_id" INTEGER NOT NULL,
+  "summary_flg" INTEGER NOT NULL,
+  "complete" INTEGER,
   "acad_yr" TEXT,
   FOREIGN KEY ("rotation_id") REFERENCES "rotation"("id") ON DELETE CASCADE,
   FOREIGN KEY ("reviewer_id") REFERENCES "reviewer"("id") ON DELETE CASCADE
@@ -44,8 +46,7 @@ CREATE TABLE "evaluation" (
 
 CREATE TABLE "question" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "question" TEXT NOT NULL,
-  "summary_flg" INTEGER NOT NULL
+  "question" TEXT NOT NULL
 );
 
 CREATE TABLE "answer" (

@@ -6,6 +6,7 @@
 #' @import dplyr
 #' @import RSQLite
 #' @import sqlife
+#' @importFrom stringr str_replace_all
 #'
 #' @returns TRUE if success
 #' @export
@@ -125,14 +126,27 @@ addDataToDB <- function(combined_data, dbInfo) {
 
   # --- Insert evaluation data
   evaluation <- data |>
-    select(
+    group_by(
       rotation_id,
       reviewer_id,
+      summary_flg,
       acad_yr
     ) |>
-    distinct()
+    mutate(
+      complete = case_when(
+        summary_flg[1] == "Y" & n() > 3 ~ 1,
+        summary_flg[1] == "N" & n() > 2 ~ 1,
+        TRUE ~ 0
+      )
+    ) |>
+    ungroup() |>
+    select(rotation_id, reviewer_id, summary_flg, acad_yr, complete) |>
+    distinct() |>
+    mutate(summary_flg = ifelse(summary_flg == "Y", 1, 0))
 
-  check <- evaluation |> group_by(rotation_id, reviewer_id) |> filter(n() > 1)
+  check <- evaluation |>
+    group_by(rotation_id, reviewer_id, summary_flg) |>
+    filter(n() > 1)
   if (nrow(check) > 0) {
     head(check)
     stop("Evaluations are not unique")
@@ -143,28 +157,26 @@ addDataToDB <- function(combined_data, dbInfo) {
   # Add the new evaluation ID to the data
   data <- data |>
     left_join(
-      evaluation |> select(rotation_id, reviewer_id, evaluation_id = id),
-      by = c("rotation_id", "reviewer_id")
+      evaluation |>
+        select(rotation_id, reviewer_id, evaluation_id = id, summary_flg) |>
+        mutate(summary_flg = ifelse(summary_flg == 1, "Y", "N")),
+      by = c("rotation_id", "reviewer_id", "summary_flg")
     )
 
   # --- Insert question data
   question <- data |>
     select(
-      question,
-      summary_flg
+      question
     ) |>
-    distinct() |>
-    mutate(summary_flg = ifelse(summary_flg == "Y", 1, 0))
+    distinct()
 
   question <- tbl_insert(question, conn, "question", commit = F)
 
   # Add the new question ID to the data
   data <- data |>
     left_join(
-      question |>
-        select(question, summary_flg, question_id = id) |>
-        mutate(summary_flg = ifelse(summary_flg == 1, "Y", "N")),
-      by = c("question", "summary_flg")
+      question |> select(question, question_id = id),
+      by = c("question")
     )
 
   # --- Insert answer data
@@ -242,4 +254,74 @@ addDataToDB <- function(combined_data, dbInfo) {
   }
 
   return(T)
+}
+
+#' Get the evaluation text from the database
+#'
+#' @param ids A vector of evaluation IDs to retrieve text for
+#' @param dbInfo A DB connection or path
+#' @param redacted (Default = TRUE) Show redacted text
+#' @param includeQuestions (Default = TRUE) Add the questions to the text
+#' @param html (Default = FALSE) Output HTML instead of plain text
+#'
+#' @import dplyr
+#' @importFrom stringr str_trim
+#'
+#' @returns A data frame with a text summary for each evaluation
+#' @export
+getEvals <- function(
+  ids,
+  dbInfo,
+  redacted = T,
+  includeQuestions = T,
+  html = F
+) {
+  conn <- dbGetConn(dbInfo)
+  evals <- tbl(conn, "answer") |>
+    inner_join(
+      tbl(conn, "evaluation") |>
+        filter(id %in% {{ ids }}) |>
+        select(id, summary_flg, complete),
+      by = c("evaluation_id" = "id")
+    ) |>
+    left_join(tbl(conn, "question"), by = c("question_id" = "id")) |>
+    collect() |>
+    mutate(
+      answer = if (redacted) {
+        answer_txt_redacted
+      } else {
+        answer_txt
+      },
+      answer = if (html) {
+        str_replace_all(str_trim(answer), "\n", "<br>")
+      } else {
+        str_trim(answer)
+      }
+    )
+
+  evals <- evals |>
+    group_by(evaluation_id) |>
+    summarise(
+      summary = summary_flg[1] == 1,
+      complete = complete[1] == 1,
+      review = paste(
+        if (includeQuestions) {
+          paste(
+            ifelse(html, "<h3>", "---"),
+            question,
+            ifelse(html, "</h3>", "\n")
+          )
+        },
+        answer,
+        sep = "",
+        collapse = ifelse(html, "<br>", "\n\n")
+      ),
+      .groups = "drop"
+    )
+
+  if (is.character(dbInfo)) {
+    dbFinish(conn)
+  }
+
+  return(evals)
 }
