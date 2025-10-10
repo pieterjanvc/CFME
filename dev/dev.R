@@ -93,3 +93,16 @@ test <- data |>
     acad_yr
   ) |>
   summarise(n = n(), firstRow = rowid[1], .groups = "drop")
+
+
+dbInfo <- "local/dev.db"
+seed <- sample(1:10000, 1)
+set.seed(seed)
+test <- reviewDoc("D:/Desktop/testReviews.txt", dbInfo, n = 10, html = F)
+
+test <- reviewDoc(
+  "D:/Desktop/testReviews.html",
+  dbInfo,
+  ids = c(1, 5, 8),
+  html = T
+)

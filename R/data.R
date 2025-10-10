@@ -264,6 +264,9 @@ addDataToDB <- function(combined_data, dbInfo) {
 #' @param includeQuestions (Default = TRUE) Add the questions to the text
 #' @param html (Default = FALSE) Output HTML instead of plain text
 #'
+#' @import dplyr
+#' @importFrom stringr str_trim
+#'
 #' @returns A data frame with a text summary for each evaluation
 #' @export
 getEvals <- function(
@@ -282,7 +285,19 @@ getEvals <- function(
       by = c("evaluation_id" = "id")
     ) |>
     left_join(tbl(conn, "question"), by = c("question_id" = "id")) |>
-    collect()
+    collect() |>
+    mutate(
+      answer = if (redacted) {
+        answer_txt_redacted
+      } else {
+        answer_txt
+      },
+      answer = if (html) {
+        str_replace_all(str_trim(answer), "\n", "<br>")
+      } else {
+        str_trim(answer)
+      }
+    )
 
   evals <- evals |>
     group_by(evaluation_id) |>
@@ -297,11 +312,7 @@ getEvals <- function(
             ifelse(html, "</h3>", "\n")
           )
         },
-        if (redacted) {
-          answer_txt_redacted
-        } else {
-          answer_txt
-        },
+        answer,
         sep = "",
         collapse = ifelse(html, "<br>", "\n\n")
       ),
