@@ -11,7 +11,7 @@
 #' @returns TRUE if success
 #' @export
 #'
-addDataToDB <- function(combined_data, dbInfo) {
+dbAddEvaluations <- function(combined_data, dbInfo) {
   # Lowercase for all columnnames
   colnames(combined_data) <- str_replace_all(
     tolower(colnames(combined_data)),
@@ -269,7 +269,7 @@ addDataToDB <- function(combined_data, dbInfo) {
 #'
 #' @returns A data frame with a text summary for each evaluation
 #' @export
-getEvals <- function(
+dbGetEvals <- function(
   ids,
   dbInfo,
   redacted = T,
@@ -304,7 +304,7 @@ getEvals <- function(
     summarise(
       summary = summary_flg[1] == 1,
       complete = complete[1] == 1,
-      review = paste(
+      evaluation = paste(
         if (includeQuestions) {
           paste(
             ifelse(html, "<h3>", "---"),
@@ -324,4 +324,136 @@ getEvals <- function(
   }
 
   return(evals)
+}
+
+#' Add a new prompt to the database
+#'
+#' @param prompt Single string of system prompt text
+#' @param dbInfo DB connection info
+#' @param note (Optional) Note about this prompt
+#' @param showWarning (Default = TRUE) Show warning if prompt already exists
+#'
+#' @import dplyr
+#' @importFrom rlang hash
+#'
+#' @returns Prompt ID
+#' @export
+#'
+dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
+  # Check if the prompt already exists
+  prompt_hash <- hash(prompt)
+  conn <- dbGetConn(dbInfo)
+  promptID <- tbl(conn, "llm_prompt") |>
+    filter(hash == local(prompt_hash)) |>
+    pull(id)
+
+  # Add new prompt if needed
+  if (length(promptID) == 0) {
+    toInsert <- data.frame(
+      hash = prompt_hash,
+      prompt = prompt
+    )
+
+    if (!missing(note)) {
+      toInsert$note = note
+    }
+
+    promptID <- tbl_insert(toInsert, conn, "llm_prompt") |> pull(id)
+  } else if (showWarning) {
+    warning("The provided prompt already is in the database")
+  }
+
+  if (is.character(dbInfo)) {
+    dbFinish(conn)
+  }
+
+  return(promptID)
+}
+
+# NOT READY YET
+dbAddLLMresponse <- function(
+  dbInfo,
+  evaluation_id,
+  include_questions,
+  redacted,
+  prompt_hash,
+  prompt,
+  llm_response
+) {
+  conn <- dbGetConn(dbInfo)
+  promptID <- tbl(conn, "llm_prompt") |>
+    filter(hash == prompt_hash) |>
+    pull(id)
+
+  # Add new prompt if needed
+  if (length(promptID) == 0) {
+    toInsert <- data.frame(
+      hash = prompt_hash,
+      text = prompt
+    )
+
+    promptID <- tbl_insert(toInsert, conn, "llm_prompt", commit = F) |> pull(id)
+  }
+
+  # Check the CSV output
+  data <- llm_csv_response(llm_response$choices[[1]]$message$content)
+
+  # Add the llm_response metadata
+  toInsert <- data.frame(
+    evaluation_id = evaluation_id,
+    prompt_id = promptID,
+    model = llm_response$model,
+    include_questions = include_questions,
+    redacted = redacted,
+    statusCode = data$statusCode,
+    tokens_in = llm_response$usage$prompt_tokens,
+    tokens_out = llm_response$usage$completion_tokens
+  )
+
+  responseID <- tbl_insert(toInsert, conn, "llm_response", commit = F) |>
+    pull(id)
+
+  # In case parsing of the result failed, end here
+  if (data$statusCode != 3) {
+    if (class(dbInfo) == "character") {
+      dbFinish(conn)
+    } else {
+      dbCommit(conn)
+    }
+
+    return(list(
+      success = F,
+      promptID = promptID,
+      responseID = responseID,
+      evaluationID = NA
+    ))
+  }
+
+  # Add the evaluation data
+  data$llm_response_id = responseID
+  data <- data |>
+    rename(
+      competency_id = cID,
+      specificity = spec,
+      utility = util,
+      sentiment = sent,
+      text_matches = text
+    )
+
+  evaluationID <- tbl_insert(data, conn, "llm_evaluation", commit = F) |>
+    pull(id)
+
+  # Finsh and return
+  if (class(dbInfo) == "character") {
+    dbFinish(conn)
+  } else {
+    dbCommit(conn)
+  }
+
+  return(list(
+    success = T,
+    promptID = promptID,
+    responseID = responseID,
+    evaluationID = evaluationID
+  ))
 }

@@ -79,8 +79,8 @@ llm_call <- function(user, system, model, maxTokens, version, endpoint, log) {
 
   # Model info
   endpoint <- ifelse(missing(endpoint), "https://azure-ai.hms.edu", endpoint)
-  version <- ifelse(missing(version), "2024-10-21", endpoint)
-  model <- ifelse(missing(model), "gpt-4o-1120", endpoint)
+  version <- ifelse(missing(version), "2024-10-21", version)
+  model <- ifelse(missing(model), "gpt-4o-1120", model)
 
   # Build the URL
   baseURL <- sprintf(
@@ -133,90 +133,104 @@ llm_call <- function(user, system, model, maxTokens, version, endpoint, log) {
   return(resp)
 }
 
-# NOT READY YET
-dbAddLLMresponse <- function(
+#' Get the data from an LLM evaluation
+#'
+#' @param dbInfo Database info
+#' @param prompt_id System prompt to use for LLM
+#' @param evaluation_id Evlaution to use
+#' @param log (Optional) Save token usage to extra file (will also be in database)
+#' @param include_questions (Default = T) Include questions in prompt
+#' @param redacted (Default = T) Use redacted data
+#' @param maxTries (Default = 3) How many times to try in case the response is
+#' not in a valid format
+#'
+#' @returns A list with 4 elements
+#' - statusCode = final status code (3 = success)
+#' - llm_response_id: ID from llm_response table in database
+#' - data: If successful, data frame with response, otherwise NULL
+#' - tries: Number of times tried for valid response
+#' @export
+#'
+llm_evaluation <- function(
   dbInfo,
+  prompt_id,
   evaluation_id,
-  includes_questions,
-  redacted,
-  prompt_hash,
-  prompt,
-  llm_response
+  log,
+  include_questions = T,
+  redacted = T,
+  maxTries = 3
 ) {
   conn <- dbGetConn(dbInfo)
-  promptID <- tbl(conn, "llm_prompt") |>
-    filter(hash == prompt_hash) |>
-    pull(id)
+  prompt <- tbl(conn, "llm_prompt") |> filter(id == prompt_id) |> pull(prompt)
 
-  # Add new prompt if needed
-  if (length(promptID) == 0) {
-    toInsert <- data.frame(
-      hash = prompt_hash,
-      text = prompt
+  if (length(prompt) == 0) {
+    stop(
+      "There is no system prompt for prompt_id ",
+      prompt_id,
+      " in the database"
     )
-
-    promptID <- tbl_insert(toInsert, conn, "llm_prompt", commit = F) |> pull(id)
   }
 
-  # Check the CSV output
-  data <- llm_csv_response(llm_response$choices[[1]]$message$content)
-
-  # Add the llm_response metadata
-  toInsert <- data.frame(
-    evaluation_id = evaluation_id,
-    prompt_id = promptID,
-    model = llm_response$model,
-    includes_questions = includes_questions,
-    redacted = redacted,
-    statusCode = data$statusCode,
-    tokens_in = llm_response$usage$prompt_tokens,
-    tokens_out = llm_response$usage$completion_tokens
+  evals <- dbGetEvals(
+    evaluation_id,
+    dbInfo = conn,
+    includeQuestions = include_questions
   )
 
-  responseID <- tbl_insert(toInsert, conn, "llm_response", commit = F) |>
-    pull(id)
-
-  # In case parsing of the result failed, end here
-  if (data$statusCode != 3) {
-    if (class(dbInfo) == "character") {
-      dbFinish(conn)
-    } else {
-      dbCommit(conn)
-    }
-
-    return(list(
-      success = F,
-      promptID = promptID,
-      responseID = responseID,
-      evaluationID = NA
-    ))
+  if (nrow(evals) == 0) {
+    stop(
+      "No evaluations found with evaluation_id ",
+      paste(evaluation_id, collapse = ",")
+    )
+  } else if (nrow(evals) == 0) {
+    warning(
+      "For now only a single review is evaluated per function call. ",
+      "Others were ignored"
+    )
   }
 
-  # Add the evaluation data
-  data$llm_response_id = responseID
-  data <- data |>
-    rename(
-      competency_id = cID,
-      specificity = spec,
-      utility = util,
-      sentiment = sent,
-      text_matches = text
+  for (i in 1:maxTries) {
+    result <- llm_call(
+      user = evals$evaluation[1],
+      system = prompt,
+      log = log
     )
 
-  evaluationID <- tbl_insert(data, conn, "llm_evaluation", commit = F) |>
-    pull(id)
+    check <- llm_csv_response(result$choices[[1]]$message$content)
 
-  # Finsh and return
-  if (class(dbInfo) == "character") {
+    # Add the response metadata
+    llm_response <- data.frame(
+      evaluation_id = evaluation_id,
+      prompt_id = prompt_id,
+      model = result$model,
+      include_questions = include_questions,
+      redacted = redacted,
+      statusCode = check$statusCode,
+      tokens_in = result$usage$prompt_tokens,
+      tokens_out = result$usage$completion_tokens
+    )
+
+    llm_response_id <- tbl_insert(
+      llm_response,
+      conn,
+      "llm_response",
+      commit = T
+    ) |>
+      pull(id)
+
+    if (check$statusCode == 3) {
+      break
+    }
+  }
+
+  if (is.character(dbInfo)) {
     dbFinish(conn)
-  } else {
-    dbCommit(conn)
   }
 
   return(list(
-    success = T,
-    promptID = promptID,
-    responseID = responseID,
-    evaluationID = evaluationID
+    statusCode = check$statusCode,
+    llm_response_id = llm_response_id,
+    data = check$data,
+    tries = i
   ))
 }

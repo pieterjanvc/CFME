@@ -65,7 +65,8 @@ CREATE TABLE "llm_prompt" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "timestamp" TEXT DEFAULT (datetime('now')),
   "hash" TEXT UNIQUE NOT NULL,
-  "text" TEXT
+  "prompt" TEXT,
+  "note" TEXT
 );
 
 CREATE TABLE "llm_response" (
@@ -74,7 +75,7 @@ CREATE TABLE "llm_response" (
   "evaluation_id" INTEGER NOT NULL,
   "prompt_id" INTEGER NOT NULL,
   "model" TEXT,
-  "includes_questions" INTEGER,
+  "include_questions" INTEGER,
   "redacted" INTEGER,
   "statusCode" INTEGER,
   "tokens_in" INTEGER,
