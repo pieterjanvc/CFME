@@ -84,7 +84,7 @@ CREATE TABLE "llm_response" (
   FOREIGN KEY ("prompt_id") REFERENCES "llm_prompt"("id") ON DELETE CASCADE
 );
 
-CREATE TABLE "llm_evaluation" (
+CREATE TABLE "llm_review" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "llm_response_id" INTEGER NOT NULL,
   "competency_id" INTEGER NOT NULL,

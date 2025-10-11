@@ -19,13 +19,13 @@ dbAddEvaluations(data, dbInfo)
 # Run eval through LLM and insert into DB
 # ***************************************
 ids = 1
-evals <- getEvals(ids, dbInfo = dbInfo)
+evals <- dbGetEvals(ids, dbInfo = dbInfo)
 
 prompt <- readLines("inst/rubricPrompt.txt") |> paste(collapse = "\n")
 promptID <- dbAddPrompt(prompt, dbInfo)
 
 
-test <- llm_evaluation(
+test <- llm_review(
   dbInfo,
   prompt_id = 1,
   evaluation_id = 1,
@@ -34,3 +34,5 @@ test <- llm_evaluation(
   redacted = T,
   maxTries = 3
 )
+
+llm_review_id <- dbAddLLMresponse(dbInfo, test)

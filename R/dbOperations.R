@@ -370,67 +370,46 @@ dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
   return(promptID)
 }
 
-# NOT READY YET
-dbAddLLMresponse <- function(
-  dbInfo,
-  evaluation_id,
-  include_questions,
-  redacted,
-  prompt_hash,
-  prompt,
-  llm_response
-) {
-  conn <- dbGetConn(dbInfo)
-  promptID <- tbl(conn, "llm_prompt") |>
-    filter(hash == prompt_hash) |>
-    pull(id)
 
-  # Add new prompt if needed
-  if (length(promptID) == 0) {
-    toInsert <- data.frame(
-      hash = prompt_hash,
-      text = prompt
+#' Add an LLM response from llm_review() to the database
+#'
+#' @param dbInfo Database info
+#' @param llm_review Output of the llm_review() function
+#'
+#' @import dplyr
+#' @import sqlife
+#'
+#' @returns A data frame with the following columns:
+#'  -evaluation_id,
+#' llm_response_id,
+#' llm_review_id: the ID for the each detected competency review scores
+#' @export
+#'
+dbAddLLMresponse <- function(dbInfo, llm_review) {
+  conn <- dbGetConn(dbInfo)
+
+  # Check if not already in database
+  check <- tbl(conn, "llm_review") |>
+    filter(llm_response_id == llm_review$llm_response_id) |>
+    pull(llm_response_id)
+
+  if (length(check) > 0) {
+    warning(
+      "The llm evaluation with llm_response_id ",
+      check,
+      "is already in the database"
     )
 
-    promptID <- tbl_insert(toInsert, conn, "llm_prompt", commit = F) |> pull(id)
-  }
-
-  # Check the CSV output
-  data <- llm_csv_response(llm_response$choices[[1]]$message$content)
-
-  # Add the llm_response metadata
-  toInsert <- data.frame(
-    evaluation_id = evaluation_id,
-    prompt_id = promptID,
-    model = llm_response$model,
-    include_questions = include_questions,
-    redacted = redacted,
-    statusCode = data$statusCode,
-    tokens_in = llm_response$usage$prompt_tokens,
-    tokens_out = llm_response$usage$completion_tokens
-  )
-
-  responseID <- tbl_insert(toInsert, conn, "llm_response", commit = F) |>
-    pull(id)
-
-  # In case parsing of the result failed, end here
-  if (data$statusCode != 3) {
     if (class(dbInfo) == "character") {
       dbFinish(conn)
-    } else {
-      dbCommit(conn)
     }
 
-    return(list(
-      success = F,
-      promptID = promptID,
-      responseID = responseID,
-      evaluationID = NA
-    ))
+    return(check)
   }
 
   # Add the evaluation data
-  data$llm_response_id = responseID
+  data <- llm_review$data
+  data$llm_response_id = llm_review$llm_response_id
   data <- data |>
     rename(
       competency_id = cID,
@@ -440,20 +419,17 @@ dbAddLLMresponse <- function(
       text_matches = text
     )
 
-  evaluationID <- tbl_insert(data, conn, "llm_evaluation", commit = F) |>
+  llm_review_id <- tbl_insert(data, conn, "llm_review", commit = T) |>
     pull(id)
 
   # Finsh and return
   if (class(dbInfo) == "character") {
     dbFinish(conn)
-  } else {
-    dbCommit(conn)
   }
 
-  return(list(
-    success = T,
-    promptID = promptID,
-    responseID = responseID,
-    evaluationID = evaluationID
+  return(data.frame(
+    evaluation_id = llm_review$evaluation_id,
+    llm_response_id = llm_review$llm_response_id,
+    llm_review_id = llm_review_id
   ))
 }

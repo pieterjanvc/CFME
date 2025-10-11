@@ -21,7 +21,7 @@ llm_csv_response <- function(string, expColnames) {
       "cID" = "integer",
       "text" = "character",
       "spec" = "integer",
-      "utility" = "integer",
+      "util" = "integer",
       "sent" = "integer"
     )
   }
@@ -151,7 +151,7 @@ llm_call <- function(user, system, model, maxTokens, version, endpoint, log) {
 #' - tries: Number of times tried for valid response
 #' @export
 #'
-llm_evaluation <- function(
+llm_review <- function(
   dbInfo,
   prompt_id,
   evaluation_id,
@@ -229,6 +229,7 @@ llm_evaluation <- function(
 
   return(list(
     statusCode = check$statusCode,
+    evaluation_id = evaluation_id,
     llm_response_id = llm_response_id,
     data = check$data,
     tries = i

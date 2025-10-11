@@ -30,21 +30,21 @@ For each detected competency collect the following data points:
 - cID: The competency ID (1-6)
 - text: Relevant pieces of text (verbatim) from the assessment, separated by ; if needed. Only include minimal number of words needed to support the competency
 - spec: The specificity score:
-	1 = briefly mentioned (key words or bullet points) with no supporting evidence
+	1 = briefly mentioned (keywords or bullet points) with no supporting evidence
 	2 = move verbose description but no supporting evidence
 	3 = full sentences with clear description and one piece of supporting evidence
 	4 = comprehensive with multiple pieces of supporting evidence
-- utility : Score indication how useful the feedack is to the student:
+- util : Utility score indicating how useful the feedback is to the student:
 	1 = Low/not useful: Uses 3rd person, minimal specific information, often vague
 	2 = Moderately useful: Specific to the student but hard to act upon
 	3 = Highly useful: Very specific and directly applicable to professional improvement
-- sent: Sentiment score of the reviewer for the compentency
+- sent: Sentiment score of the reviewer for the competency
   1 = clearly negative / red flag
-  2 = slightly crititcal
+  2 = slightly critical
   3 = neutral
   4 = slightly positive
   5 = clearly positive
 
 # TO RETURN
 Return the evaluation in a valid CSV format (no backticks or code markup)
-Each row is a detected competency with the following columns: cID, text, spec, utility, sent
+Each row is a detected competency with the following columns: cID, text, spec, util, sent
