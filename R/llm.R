@@ -136,7 +136,7 @@ llm_call <- function(user, system, model, maxTokens, version, endpoint, log) {
 #' Get the data from an LLM evaluation
 #'
 #' @param dbInfo Database info
-#' @param prompt_id System prompt to use for LLM
+#' @param review_prompt_id System prompt to use for LLM
 #' @param evaluation_id Evlaution to use
 #' @param log (Optional) Save token usage to extra file (will also be in database)
 #' @param include_questions (Default = T) Include questions in prompt
@@ -146,27 +146,30 @@ llm_call <- function(user, system, model, maxTokens, version, endpoint, log) {
 #'
 #' @returns A list with 4 elements
 #' - statusCode = final status code (3 = success)
-#' - llm_response_id: ID from llm_response table in database
+#' - review_response_id: ID from review_response table in database
 #' - data: If successful, data frame with response, otherwise NULL
 #' - tries: Number of times tried for valid response
 #' @export
 #'
 llm_review <- function(
   dbInfo,
-  prompt_id,
+  review_prompt_id,
   evaluation_id,
+  model,
   log,
   include_questions = T,
   redacted = T,
   maxTries = 3
 ) {
   conn <- dbGetConn(dbInfo)
-  prompt <- tbl(conn, "llm_prompt") |> filter(id == prompt_id) |> pull(prompt)
+  prompt <- tbl(conn, "review_prompt") |>
+    filter(id == review_prompt_id) |>
+    pull(prompt)
 
   if (length(prompt) == 0) {
     stop(
-      "There is no system prompt for prompt_id ",
-      prompt_id,
+      "There is no system prompt for review_prompt_id ",
+      review_prompt_id,
       " in the database"
     )
   }
@@ -190,30 +193,60 @@ llm_review <- function(
   }
 
   for (i in 1:maxTries) {
-    result <- llm_call(
-      user = evals$evaluation[1],
-      system = prompt,
-      log = log
+    # Actual LLM call
+    tryCatch(
+      {
+        duration <- Sys.time()
+        result <- llm_call(
+          user = evals$evaluation[1],
+          system = prompt,
+          model = model,
+          log = log
+        )
+        duration <- difftime(Sys.time(), duration, units = "sec") |>
+          as.numeric() |>
+          round(2)
+      },
+      error = function(e) {
+        if (is.character(dbInfo)) {
+          dbFinish(conn, commit = F)
+        }
+        stop(e)
+      }
     )
+
+    # Check if the model is already in the database as a reviewer otherwise add it
+    reviewer_id <- tbl(conn, "reviewer") |>
+      filter(model == result$model) |>
+      pull(id)
+
+    if (length(reviewer_id) == 0) {
+      reviewer <- data.frame(
+        human = 0,
+        model = result$model
+      )
+      reviewer_id <- tbl_insert(reviewer, dbInfo, "reviewer") |> pull(id)
+    }
 
     check <- llm_csv_response(result$choices[[1]]$message$content)
 
     # Add the response metadata
-    llm_response <- data.frame(
+    review_response <- data.frame(
       evaluation_id = evaluation_id,
-      prompt_id = prompt_id,
-      model = result$model,
+      review_prompt_id = review_prompt_id,
+      reviewer_id = reviewer_id,
       include_questions = include_questions,
       redacted = redacted,
       statusCode = check$statusCode,
       tokens_in = result$usage$prompt_tokens,
-      tokens_out = result$usage$completion_tokens
+      tokens_out = result$usage$completion_tokens,
+      duration = duration
     )
 
-    llm_response_id <- tbl_insert(
-      llm_response,
+    review_response_id <- tbl_insert(
+      review_response,
       conn,
-      "llm_response",
+      "review_response",
       commit = T
     ) |>
       pull(id)
@@ -230,7 +263,7 @@ llm_review <- function(
   return(list(
     statusCode = check$statusCode,
     evaluation_id = evaluation_id,
-    llm_response_id = llm_response_id,
+    review_response_id = review_response_id,
     data = check$data,
     tries = i
   ))

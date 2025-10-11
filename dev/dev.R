@@ -9,11 +9,11 @@ if (file.exists(dbInfo)) {
 }
 
 dbSetup(dbInfo, "inst/cfme.sql", validateSchema = T)
-data <- readxl::read_xlsx(
+combined_data <- readxl::read_xlsx(
   "local/BIDMC_Med_Neuro_SPE_Comments_Dataset_07242025.xlsx"
 )
 
-dbAddEvaluations(data, dbInfo)
+dbAddEvaluations(combined_data, dbInfo)
 # ---
 
 # Run eval through LLM and insert into DB
@@ -22,17 +22,17 @@ ids = 1
 evals <- dbGetEvals(ids, dbInfo = dbInfo)
 
 prompt <- readLines("inst/rubricPrompt.txt") |> paste(collapse = "\n")
-promptID <- dbAddPrompt(prompt, dbInfo)
+review_prompt_id <- dbAddPrompt(prompt, dbInfo)
 
 
 test <- llm_review(
   dbInfo,
-  prompt_id = 1,
-  evaluation_id = 1,
+  review_prompt_id = 1,
+  evaluation_id = 2,
   log = "local/apiLog.csv",
   include_questions = T,
   redacted = T,
   maxTries = 3
 )
 
-llm_review_id <- dbAddLLMresponse(dbInfo, test)
+review_scores_ids <- dbAddLLMresponse(dbInfo, test)

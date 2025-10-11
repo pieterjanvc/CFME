@@ -13,9 +13,11 @@ dbAddLLMresponse(dbInfo, llm_review)
 }
 \value{
 A data frame with the following columns:
--evaluation_id,
-llm_response_id,
-llm_review_id: the ID for the each detected competency review scores
+\itemize{
+\item evaluation_id,
+\item review_response_id,
+\item review_score_id: the ID for the each detected competency review scores
+}
 }
 \description{
 Add an LLM response from llm_review() to the database

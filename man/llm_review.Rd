@@ -6,8 +6,9 @@
 \usage{
 llm_review(
   dbInfo,
-  prompt_id,
+  review_prompt_id,
   evaluation_id,
+  model,
   log,
   include_questions = T,
   redacted = T,
@@ -17,7 +18,7 @@ llm_review(
 \arguments{
 \item{dbInfo}{Database info}
 
-\item{prompt_id}{System prompt to use for LLM}
+\item{review_prompt_id}{System prompt to use for LLM}
 
 \item{evaluation_id}{Evlaution to use}
 
@@ -34,7 +35,7 @@ not in a valid format}
 A list with 4 elements
 \itemize{
 \item statusCode = final status code (3 = success)
-\item llm_response_id: ID from llm_response table in database
+\item review_response_id: ID from review_response table in database
 \item data: If successful, data frame with response, otherwise NULL
 \item tries: Number of times tried for valid response
 }
