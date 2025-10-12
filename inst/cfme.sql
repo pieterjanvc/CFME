@@ -63,7 +63,7 @@ CREATE TABLE "answer" (
 
 CREATE TABLE "reviewer" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "timestamp" TEXT DEFAULT (datetime('now')),
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
   "human" INTEGER NOT NULL,
   "model" TEXT,
   "username" TEXT,
@@ -74,7 +74,7 @@ CREATE TABLE "reviewer" (
 
 CREATE TABLE "review_prompt" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "timestamp" TEXT DEFAULT (datetime('now')),
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
   "hash" TEXT UNIQUE NOT NULL,
   "prompt" TEXT,
   "note" TEXT
@@ -82,7 +82,7 @@ CREATE TABLE "review_prompt" (
 
 CREATE TABLE "review_response" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "timestamp" TEXT DEFAULT (datetime('now')),
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
   "evaluation_id" INTEGER NOT NULL,
   "review_prompt_id" INTEGER NOT NULL,
   "reviewer_id" INTEGER NOT NULL,
