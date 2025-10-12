@@ -11,7 +11,7 @@
 #' @returns TRUE if success
 #' @export
 #'
-addDataToDB <- function(combined_data, dbInfo) {
+dbAddEvaluations <- function(combined_data, dbInfo) {
   # Lowercase for all columnnames
   colnames(combined_data) <- str_replace_all(
     tolower(colnames(combined_data)),
@@ -26,7 +26,8 @@ addDataToDB <- function(combined_data, dbInfo) {
       as.character(x)
     }
   }) |>
-    as.data.frame()
+    as.data.frame() |>
+    rename(original_evaluator_id = evaluator_id)
 
   data <- combined_data
 
@@ -63,23 +64,23 @@ addDataToDB <- function(combined_data, dbInfo) {
       by = "learner_anon_id"
     )
 
-  # --- Insert reviewer data
+  # --- Insert evaluator data
   #  Given their title can change over time, the evaluator_id is NOT unique
-  reviewer <- data |>
+  evaluator <- data |>
     select(
-      evaluator_id,
+      original_evaluator_id,
       evaluator,
       acad_title
     ) |>
     distinct()
 
-  reviewer <- tbl_insert(reviewer, conn, "reviewer", commit = F)
+  evaluator <- tbl_insert(evaluator, conn, "evaluator", commit = F)
 
-  # Add the new reviewer ID to the data
+  # Add the new evaluator ID to the data
   data <- data |>
     left_join(
-      reviewer |> select(evaluator_id, acad_title, reviewer_id = id),
-      by = c("evaluator_id", "acad_title")
+      evaluator |> select(original_evaluator_id, acad_title, evaluator_id = id),
+      by = c("original_evaluator_id", "acad_title")
     )
 
   # --- Insert clerkship data
@@ -128,7 +129,7 @@ addDataToDB <- function(combined_data, dbInfo) {
   evaluation <- data |>
     group_by(
       rotation_id,
-      reviewer_id,
+      evaluator_id,
       summary_flg,
       acad_yr
     ) |>
@@ -140,12 +141,12 @@ addDataToDB <- function(combined_data, dbInfo) {
       )
     ) |>
     ungroup() |>
-    select(rotation_id, reviewer_id, summary_flg, acad_yr, complete) |>
+    select(rotation_id, evaluator_id, summary_flg, acad_yr, complete) |>
     distinct() |>
     mutate(summary_flg = ifelse(summary_flg == "Y", 1, 0))
 
   check <- evaluation |>
-    group_by(rotation_id, reviewer_id, summary_flg) |>
+    group_by(rotation_id, evaluator_id, summary_flg) |>
     filter(n() > 1)
   if (nrow(check) > 0) {
     head(check)
@@ -158,9 +159,9 @@ addDataToDB <- function(combined_data, dbInfo) {
   data <- data |>
     left_join(
       evaluation |>
-        select(rotation_id, reviewer_id, evaluation_id = id, summary_flg) |>
+        select(rotation_id, evaluator_id, evaluation_id = id, summary_flg) |>
         mutate(summary_flg = ifelse(summary_flg == 1, "Y", "N")),
-      by = c("rotation_id", "reviewer_id", "summary_flg")
+      by = c("rotation_id", "evaluator_id", "summary_flg")
     )
 
   # --- Insert question data
@@ -200,7 +201,7 @@ addDataToDB <- function(combined_data, dbInfo) {
     left_join(question, by = c("question_id" = "id")) |>
     left_join(evaluation, by = c("evaluation_id" = "id")) |>
     left_join(rotation, by = c("rotation_id" = "id")) |>
-    left_join(reviewer, by = c("reviewer_id" = "id")) |>
+    left_join(evaluator, by = c("evaluator_id" = "id")) |>
     left_join(clerkship, by = c("clerkship_id" = "id")) |>
     left_join(student, by = c("student_id" = "id")) |>
     mutate(summary_flg = ifelse(summary_flg == 1, "Y", "N"))
@@ -269,7 +270,7 @@ addDataToDB <- function(combined_data, dbInfo) {
 #'
 #' @returns A data frame with a text summary for each evaluation
 #' @export
-getEvals <- function(
+dbGetEvals <- function(
   ids,
   dbInfo,
   redacted = T,
@@ -304,7 +305,7 @@ getEvals <- function(
     summarise(
       summary = summary_flg[1] == 1,
       complete = complete[1] == 1,
-      review = paste(
+      evaluation = paste(
         if (includeQuestions) {
           paste(
             ifelse(html, "<h3>", "---"),
@@ -324,4 +325,112 @@ getEvals <- function(
   }
 
   return(evals)
+}
+
+#' Add a new prompt to the database
+#'
+#' @param prompt Single string of system prompt text
+#' @param dbInfo DB connection info
+#' @param note (Optional) Note about this prompt
+#' @param showWarning (Default = TRUE) Show warning if prompt already exists
+#'
+#' @import dplyr
+#' @importFrom rlang hash
+#'
+#' @returns Prompt ID
+#' @export
+#'
+dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
+  # Check if the prompt already exists
+  prompt_hash <- hash(prompt)
+  conn <- dbGetConn(dbInfo)
+  promptID <- tbl(conn, "review_prompt") |>
+    filter(hash == local(prompt_hash)) |>
+    pull(id)
+
+  # Add new prompt if needed
+  if (length(promptID) == 0) {
+    toInsert <- data.frame(
+      hash = prompt_hash,
+      prompt = prompt
+    )
+
+    if (!missing(note)) {
+      toInsert$note = note
+    }
+
+    promptID <- tbl_insert(toInsert, conn, "review_prompt") |> pull(id)
+  } else if (showWarning) {
+    warning("The provided prompt already is in the database")
+  }
+
+  if (is.character(dbInfo)) {
+    dbFinish(conn)
+  }
+
+  return(promptID)
+}
+
+
+#' Add an LLM response from llm_review() to the database
+#'
+#' @param dbInfo Database info
+#' @param llm_review Output of the llm_review() function
+#'
+#' @import dplyr
+#' @import sqlife
+#'
+#' @returns A data frame with the following columns:
+#' - evaluation_id,
+#' - review_response_id,
+#' - review_score_id: the ID for the each detected competency review scores
+#' @export
+#'
+dbAddLLMresponse <- function(dbInfo, llm_review) {
+  conn <- dbGetConn(dbInfo)
+
+  # Check if not already in database
+  check <- tbl(conn, "review_score") |>
+    filter(review_response_id == llm_review$review_response_id) |>
+    pull(review_response_id)
+
+  if (length(check) > 0) {
+    warning(
+      "The llm evaluation with review_response_id ",
+      check,
+      "is already in the database"
+    )
+
+    if (class(dbInfo) == "character") {
+      dbFinish(conn)
+    }
+
+    return(check)
+  }
+
+  # Add the evaluation data
+  data <- llm_review$data
+  data$review_response_id = llm_review$review_response_id
+  data <- data |>
+    rename(
+      competency_id = cID,
+      specificity = spec,
+      utility = util,
+      sentiment = sent,
+      text_matches = text
+    )
+
+  review_score_id <- tbl_insert(data, conn, "review_score", commit = T) |>
+    pull(id)
+
+  # Finsh and return
+  if (class(dbInfo) == "character") {
+    dbFinish(conn)
+  }
+
+  return(data.frame(
+    evaluation_id = llm_review$evaluation_id,
+    review_response_id = llm_review$review_response_id,
+    review_score_id = review_score_id
+  ))
 }
