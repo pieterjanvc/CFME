@@ -2,11 +2,12 @@
 #'
 #' @param path Path the file where to write the output (html or txt)
 #' @param dbInfo Database info
-#' @param ids IDs to pull, if empty, n must be provided
+#' @param evaluation_ids evaluation_ids to pull, if empty, n must be provided
 #' @param n Ignored if ids is set, otherwise number of random evaluations to pull
 #' @param completeOnly (Default = FALSE) Only include complete reviews
 #' @param redacted (Default = TRUE) Show redacted text
 #' @param includeQuestions (Default = TRUE) Add the questions to the text
+#' @param includeClerkship (Default = TRUE) Add the clerkship name
 #' @param html (Default = FALSE) Output HTML instead of plain text
 #'
 #' @returns A file is written to the specified path and a data frame with
@@ -17,16 +18,18 @@
 reviewDoc <- function(
   path,
   dbInfo,
-  ids,
+  evaluation_ids,
   n,
   completeOnly = F,
   redacted = T,
   includeQuestions = T,
+  includeClerkship = T,
   html = F
 ) {
   conn <- dbGetConn(dbInfo)
 
-  if (missing(ids)) {
+  # Get / check evaluation_ids
+  if (missing(evaluation_ids)) {
     ids <- tbl(conn, "evaluation") |>
       filter(
         complete %in%
@@ -41,9 +44,9 @@ reviewDoc <- function(
       slice_sample(n = n) |>
       pull(id)
   } else {
-    n <- length(ids)
+    n <- length(evaluation_ids)
     ids <- tbl(conn, "evaluation") |>
-      filter(id %in% local(ids)) |>
+      filter(id %in% local(evaluation_ids)) |>
       pull(id)
   }
 
@@ -51,7 +54,7 @@ reviewDoc <- function(
     stop("The number of requested IDs and those in the database don't match")
   }
 
-  evals <- getEvals(
+  evals <- dbGetEvals(
     ids,
     conn,
     redacted = redacted,
@@ -61,18 +64,21 @@ reviewDoc <- function(
 
   review <- evals |>
     summarise(
-      review = paste(
+      evaluation = paste(
         ifelse(html, "<h2>", "#### "),
-        "Evaluation ID:",
+        "Evaluation ID: ",
         evaluation_id,
+        if (includeClerkship) {
+          paste(" - Clerkship: ", clerkship)
+        },
         ifelse(html, "</h2>", "\n\n"),
-        review,
+        evaluation,
         ifelse(html, "<br><br><hr>", "\n\n"),
         sep = "",
         collapse = ifelse(html, "<br>", "\n")
       )
     ) |>
-    pull(review)
+    pull(evaluation)
 
   if (is.character(dbInfo)) {
     dbFinish(conn)

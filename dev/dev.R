@@ -14,7 +14,7 @@ combined_data <- readxl::read_xlsx(
 )
 
 dbAddEvaluations(combined_data, dbInfo)
-# ---
+
 
 # Run eval through LLM and insert into DB
 # ***************************************
@@ -37,3 +37,36 @@ review_scores_ids <- dbAddLLMresponse(dbInfo, test)
 
 # Open the DB
 shell.exec(normalizePath(dbInfo))
+
+
+# Generate manual review doc
+# **************************
+
+samples <- c("MEDICINE" = 5, "NEUROLOGY" = 5)
+evaluation_ids <- sapply(
+  1:length(samples),
+  function(i) {
+    tbl(conn, "evaluation") |>
+      filter(summary_flg == 0) |>
+      left_join(
+        tbl(conn, "rotation") |> select(id, clerkship_id),
+        by = c("rotation_id" = "id")
+      ) |>
+      left_join(tbl(conn, "clerkship"), by = c("clerkship_id" = "id")) |>
+      filter(clerkship == local(names(samples[i]))) |>
+      slice_sample(n = samples[i]) |>
+      pull(id)
+  }
+) |>
+  as.integer()
+
+evaluationsToReview <- reviewDoc(
+  "local/evalTest.html",
+  conn,
+  evaluation_ids = evaluation_ids,
+  html = T,
+  includeClerkship = T,
+  includeQuestions = T
+)
+
+dbDisconnect(conn)

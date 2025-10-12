@@ -282,10 +282,15 @@ dbGetEvals <- function(
     inner_join(
       tbl(conn, "evaluation") |>
         filter(id %in% {{ ids }}) |>
-        select(id, summary_flg, complete),
+        select(id, rotation_id, summary_flg, complete),
       by = c("evaluation_id" = "id")
     ) |>
     left_join(tbl(conn, "question"), by = c("question_id" = "id")) |>
+    left_join(
+      tbl(conn, "rotation") |> select(id, clerkship_id),
+      by = c("rotation_id" = "id")
+    ) |>
+    left_join(tbl(conn, "clerkship"), by = c("clerkship_id" = "id")) |>
     collect() |>
     mutate(
       answer = if (redacted) {
@@ -305,6 +310,7 @@ dbGetEvals <- function(
     summarise(
       summary = summary_flg[1] == 1,
       complete = complete[1] == 1,
+      clerkship = clerkship[1],
       evaluation = paste(
         if (includeQuestions) {
           paste(

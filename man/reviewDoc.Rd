@@ -7,11 +7,12 @@
 reviewDoc(
   path,
   dbInfo,
-  ids,
+  evaluation_ids,
   n,
   completeOnly = F,
   redacted = T,
   includeQuestions = T,
+  includeClerkship = T,
   html = F
 )
 }
@@ -19,8 +20,6 @@ reviewDoc(
 \item{path}{Path the file where to write the output (html or txt)}
 
 \item{dbInfo}{Database info}
-
-\item{ids}{IDs to pull, if empty, n must be provided}
 
 \item{n}{Ignored if ids is set, otherwise number of random evaluations to pull}
 
@@ -31,6 +30,8 @@ reviewDoc(
 \item{includeQuestions}{(Default = TRUE) Add the questions to the text}
 
 \item{html}{(Default = FALSE) Output HTML instead of plain text}
+
+\item{ids}{IDs to pull, if empty, n must be provided}
 }
 \value{
 A file is written to the specified path and a data frame with
