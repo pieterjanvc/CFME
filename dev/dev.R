@@ -1,5 +1,6 @@
 # devtools::install_github("pieterjanvc/sqlife", ref = "data_manipulation")
 
+dbInfo <- "local/test.db"
 dbInfo <- "local/dev.db"
 
 # Start from scratch ----
@@ -42,6 +43,8 @@ shell.exec(normalizePath(dbInfo))
 # Generate manual review doc
 # **************************
 
+conn <- dbGetConn(dbInfo)
+
 samples <- c("MEDICINE" = 5, "NEUROLOGY" = 5)
 evaluation_ids <- sapply(
   1:length(samples),
@@ -68,5 +71,8 @@ evaluationsToReview <- reviewDoc(
   includeClerkship = T,
   includeQuestions = T
 )
+
+evaluation_ids <- c(120, 241, 734, 1209, 1236, 1636, 1693, 1968, 1979, 2022)
+evals <- dbGetEvals(evaluation_ids, dbInfo)
 
 dbDisconnect(conn)

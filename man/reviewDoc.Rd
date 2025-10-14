@@ -21,6 +21,8 @@ reviewDoc(
 
 \item{dbInfo}{Database info}
 
+\item{evaluation_ids}{evaluation_ids to pull, if empty, n must be provided}
+
 \item{n}{Ignored if ids is set, otherwise number of random evaluations to pull}
 
 \item{completeOnly}{(Default = FALSE) Only include complete reviews}
@@ -29,9 +31,9 @@ reviewDoc(
 
 \item{includeQuestions}{(Default = TRUE) Add the questions to the text}
 
-\item{html}{(Default = FALSE) Output HTML instead of plain text}
+\item{includeClerkship}{(Default = TRUE) Add the clerkship name}
 
-\item{ids}{IDs to pull, if empty, n must be provided}
+\item{html}{(Default = FALSE) Output HTML instead of plain text}
 }
 \value{
 A file is written to the specified path and a data frame with

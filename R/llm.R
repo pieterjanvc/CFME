@@ -208,10 +208,7 @@ llm_review <- function(
           round(2)
       },
       error = function(e) {
-        if (is.character(dbInfo)) {
-          dbFinish(conn, commit = F)
-        }
-        stop(e)
+        dbFinish(conn, error = e)
       }
     )
 
