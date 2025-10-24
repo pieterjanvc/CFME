@@ -275,7 +275,8 @@ dbGetEvals <- function(
   dbInfo,
   redacted = T,
   includeQuestions = T,
-  html = F
+  html = F,
+  subtitleTag = "h3"
 ) {
   conn <- dbGetConn(dbInfo)
   evals <- tbl(conn, "answer") |>
@@ -314,14 +315,14 @@ dbGetEvals <- function(
       evaluation = paste(
         if (includeQuestions) {
           paste(
-            ifelse(html, "<h3>", "---"),
+            ifelse(html, sprintf("<%s>", subtitleTag), "---"),
             question,
-            ifelse(html, "</h3>", "\n")
+            ifelse(html, sprintf("</%s><br>", subtitleTag), "\n")
           )
         },
         answer,
         sep = "",
-        collapse = ifelse(html, "<br>", "\n\n")
+        collapse = ifelse(html, "<br><br>", "\n\n")
       ),
       .groups = "drop"
     )
