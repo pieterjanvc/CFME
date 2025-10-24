@@ -1,4 +1,4 @@
-# devtools::install_github("pieterjanvc/sqlife", ref = "data_manipulation")
+# devtools::install_github("pieterjanvc/sqlife", ref = "v0.1.1")
 
 dbInfo <- "local/test.db"
 dbInfo <- "local/dev.db"
@@ -34,7 +34,7 @@ test <- llm_review(
   maxTries = 3
 )
 
-review_scores_ids <- dbAddLLMresponse(dbInfo, test)
+review_scores_ids <- dbAddLLMreview(dbInfo, test)
 
 # Open the DB
 shell.exec(normalizePath(dbInfo))

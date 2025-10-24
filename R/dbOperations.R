@@ -392,7 +392,7 @@ dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
 #' - review_score_id: the ID for the each detected competency review scores
 #' @export
 #'
-dbAddLLMresponse <- function(dbInfo, llm_review) {
+dbAddLLMreview <- function(dbInfo, llm_review) {
   conn <- dbGetConn(dbInfo)
 
   # Check if not already in database
