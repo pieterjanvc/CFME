@@ -356,6 +356,11 @@ dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
 
   # Add new prompt if needed
   if (length(promptID) == 0) {
+    parsed <- parsePrompt(prompt)
+    if (!parsed$success) {
+      dbFinish(conn, error = parsed$msg)
+    }
+
     toInsert <- data.frame(
       hash = prompt_hash,
       prompt = prompt
