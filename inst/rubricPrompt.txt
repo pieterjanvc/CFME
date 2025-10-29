@@ -41,7 +41,7 @@ For each detected competency collect the following data points:
 ### util : Utility score indicating how useful the feedback is to the student:
 - 1: low/not useful: Uses 3rd person, minimal specific information, often vague
 - 2: moderately useful: Specific to the student but hard to act upon
-- 3: = highly useful: Very specific and directly applicable to professional improvement
+- 3: highly useful: Very specific and directly applicable to professional improvement
 
 ### sent: Sentiment score of the evaluator's comments on the competency
 - 1: clearly negative / red flag

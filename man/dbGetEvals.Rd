@@ -4,7 +4,14 @@
 \alias{dbGetEvals}
 \title{Get the evaluation text from the database}
 \usage{
-dbGetEvals(ids, dbInfo, redacted = T, includeQuestions = T, html = F)
+dbGetEvals(
+  ids,
+  dbInfo,
+  redacted = T,
+  includeQuestions = T,
+  html = F,
+  subtitleTag = "h3"
+)
 }
 \arguments{
 \item{ids}{A vector of evaluation IDs to retrieve text for}

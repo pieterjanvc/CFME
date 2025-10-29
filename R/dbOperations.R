@@ -279,10 +279,11 @@ dbGetEvals <- function(
   subtitleTag = "h3"
 ) {
   conn <- dbGetConn(dbInfo)
+  toFilter <- ids
   evals <- tbl(conn, "answer") |>
     inner_join(
       tbl(conn, "evaluation") |>
-        filter(id %in% {{ ids }}) |>
+        filter(id %in% toFilter) |>
         select(id, rotation_id, summary_flg, complete),
       by = c("evaluation_id" = "id")
     ) |>

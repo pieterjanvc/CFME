@@ -2,19 +2,32 @@ library(shiny)
 library(DT)
 library(stringr)
 
+mod_highlight_ui <- function(id) {
+  ns <- NS(id)
+  tagList(
+    # Capture highlighted text on the screen
+    tags$script(HTML(sprintf(
+      "
+      document.addEventListener('mouseup', function() {
+        var selected = window.getSelection().toString();
+        Shiny.setInputValue('%s', selected);
+      });
+    ",
+      ns("highlighted_text")
+    ))),
+    actionButton(ns("addSel"), "Add highlighted"),
+    uiOutput(ns(id, "selList"))
+  )
+}
+
+mod_highlight_server <- function(id) {
+  moduleServer(id, function(input, output, session) {})
+}
+
 # dbInfo <- "local/test.db"
 dbInfo <- "../local/test.db"
 
 ui <- fluidPage(
-  # Capture highlighted text on the screen
-  tags$script(HTML(
-    "
-    document.addEventListener('mouseup', function() {
-      var selected = window.getSelection().toString();
-      Shiny.setInputValue('highlighted_text', selected);
-    });
-  "
-  )),
   # Layout
   fluidRow(
     column(
