@@ -448,15 +448,40 @@ dbAddLLMreview <- function(dbInfo, llm_review) {
   ))
 }
 
-# "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-# "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
-# "human" INTEGER NOT NULL,
-# "model" TEXT,
-# "username" TEXT,
-# "first_name" TEXT,
-# "last_name" TEXT,
-# "note" TEXT
+#' Internal function to insert or update into reviewer table
+#'
+#' @param conn SQLite connection
+#' @param data Data frame with table columns
+#'
+#' @importFrom sqlife tbl_update tbl_insert
+#'
+#' @returns Inserted / Updated data frame
+dbReviewer <- function(conn, data) {
+  if ("id" %in% colnames(data)) {
+    # Update existing
+    return(tbl_update(data, conn, "reviewer", commit = F))
+  } else {
+    # Create new
+    return(tbl_insert(data, conn, "reviewer", commit = F))
+  }
+}
 
+#' Insert or Update human reviewer info into the database
+#'
+#' @param dbInfo dbInfo object
+#' @param id (Optional) Reviewer id. If provided this means updating existing.
+#' If not, a new reviewer will be created
+#' @param username Username. Required if new reviewer
+#' @param first (Optional) first name
+#' @param last (Optional) last name
+#' @param note (Optional) note
+#' @param commit (Default = T) Commit the changes to the database
+#'
+#' @import sqlife dplyr
+#'
+#' @returns Data frame with inserted / updated reviewer info
+#'
+#' @export
 dbReviewerHuman <- function(
   dbInfo,
   id,
@@ -469,31 +494,67 @@ dbReviewerHuman <- function(
   conn <- dbGetConn(dbInfo)
 
   if (!missing(id)) {
-    reviewer <- tbl(conn, "reviewer") |> filter(id == {{ id }}, human == 1)
+    check <- id
+    id <- tbl(conn, "reviewer") |>
+      filter(id %in% {{ id }}, human == 1) |>
+      pull(id)
     # Check if exists
-    if (nrow(reviewer) == 0) {
+    if (length(id) == 0) {
       dbFinish(
         conn,
-        error = "No human reviewer exists with id ",
-        id,
-        ". Omit id to create new reviewer"
+        error = paste0(
+          "No human reviewer exists with id ",
+          check,
+          ". Omit id to create new reviewer"
+        )
       )
     }
+  } else if (missing(username)) {
+    dbFinish(conn, error = "A new human reviewer needs at least a username")
   } else {
-    reviewer <- data.frame(
-      human = T,
-      username = missingVal(username),
-      first_name = missingVal(first),
-      last_name = missingVal(last),
-      note = missingVal(note)
-    )
+    check <- tbl(conn, "reviewer") |>
+      filter(username == {{ username }}) |>
+      pull(id)
+    if (length(check) > 0) {
+      dbFinish(
+        conn,
+        error = sprintf("A reviewer with username %s already exists", username)
+      )
+    }
   }
 
-  if (is.na(reviewer$username)) {
-    dbFinish(conn, error = "A human reviewer needs at least a username")
-  }
+  # Create the data frame needed for insertion into reviewer table
+  reviewer <- data.frame(
+    id = missingVal(id),
+    human = T,
+    username = missingVal(username),
+    first_name = missingVal(first),
+    last_name = missingVal(last),
+    note = missingVal(note)
+  )
+  # Only keep columns with any new info
+  reviewer <- reviewer[, apply(reviewer, 2, function(x) !all(is.na(x)))]
+
+  result <- dbReviewer(conn, reviewer)
+
+  dbFinish(conn)
+
+  return(result)
 }
 
+#' Insert or Update AI reviewer info into the database
+#'
+#' @param dbInfo dbInfo object
+#' @param id (Optional) Reviewer id. If provided this means updating existing.
+#' If not, a new reviewer will be created
+#' @param model AI model name. Required if new reviewer
+#' @param commit (Default = T) Commit the changes to the database
+#'
+#' @import sqlife dplyr
+#'
+#' @returns Data frame with inserted / updated reviewer info
+#'
+#' @export
 dbReviewerAI <- function(
   dbInfo,
   id,
@@ -502,24 +563,50 @@ dbReviewerAI <- function(
   commit = T
 ) {
   conn <- dbGetConn(dbInfo)
-  on.exit(dbFinish(conn, commit = F, showWarnings = F))
 
   if (!missing(id)) {
-    reviewer <- tbl(conn, "reviewer") |> filter(id == {{ id }}, human == 0)
-
-    if (nrow(reviewer) == 0) {
-      dbFinish(conn, error = "No AI reviewer existis with id ", id)
+    check <- id
+    id <- tbl(conn, "reviewer") |>
+      filter(id %in% {{ id }}, human == 0) |>
+      pull(id)
+    # Check if exists
+    if (length(id) == 0) {
+      dbFinish(
+        conn,
+        error = paste0(
+          "No AI reviewer exists with id ",
+          check,
+          ". Omit id to create new AI reviewer"
+        )
+      )
     }
+  } else if (missing(model)) {
+    dbFinish(conn, error = "A new AI reviewer needs model name")
   } else {
-    reviewer <- data.frame(
-      model = ifelse(missing(model), NA, model),
-      note = ifelse(missing(note), NA, note)
-    )
+    check <- tbl(conn, "reviewer") |>
+      filter(model == {{ model }}) |>
+      pull(id)
+    if (length(check) > 0) {
+      dbFinish(
+        conn,
+        error = sprintf("A reviewer with model name %s already exists", model)
+      )
+    }
   }
 
-  if (is.na(reviewer$model)) {
-    dbFinish(conn, error = "An AI reviewer needs a valid model name")
-  }
+  # Create the data frame needed for insertion into reviewer table
+  reviewer <- data.frame(
+    id = missingVal(id),
+    human = F,
+    model = missingVal(model),
+    note = missingVal(note)
+  )
+  # Only keep columns with any new info
+  reviewer <- reviewer[, apply(reviewer, 2, function(x) !all(is.na(x)))]
+
+  result <- dbReviewer(conn, reviewer)
+
+  dbFinish(conn)
+
+  return(result)
 }
-
-dbReviewer <- function(dbInfo, data) {}

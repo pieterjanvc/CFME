@@ -1,4 +1,4 @@
-# devtools::install_github("pieterjanvc/sqlife", ref = "v0.1.1")
+# devtools::install_github("pieterjanvc/sqlife", ref = "v0.1.2")
 
 dbInfo <- "local/test.db"
 dbInfo <- "local/dev.db"
