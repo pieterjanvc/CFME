@@ -73,3 +73,21 @@ parsePrompt <- function(prompt) {
     )
   ))
 }
+
+#' Provide missing values if variable does not exist
+#'
+#' @param var Variabe to check
+#' @param useNull (Default = F). Return NA if FALSE else NULL
+#' @param n (Default = 1) How may times to repeat NA
+#'
+#' @returns A vector of values, NAs or NULL depending on settings
+#'
+missingVal <- function(var, useNull = F, n = 1) {
+  if (!missing(var)) {
+    var
+  } else if (useNull) {
+    NULL
+  } else {
+    rep(NA, n)
+  }
+}

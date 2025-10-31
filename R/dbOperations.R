@@ -447,3 +447,79 @@ dbAddLLMreview <- function(dbInfo, llm_review) {
     review_score_id = review_score_id
   ))
 }
+
+# "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+# "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+# "human" INTEGER NOT NULL,
+# "model" TEXT,
+# "username" TEXT,
+# "first_name" TEXT,
+# "last_name" TEXT,
+# "note" TEXT
+
+dbReviewerHuman <- function(
+  dbInfo,
+  id,
+  username,
+  first,
+  last,
+  note,
+  commit = T
+) {
+  conn <- dbGetConn(dbInfo)
+
+  if (!missing(id)) {
+    reviewer <- tbl(conn, "reviewer") |> filter(id == {{ id }}, human == 1)
+    # Check if exists
+    if (nrow(reviewer) == 0) {
+      dbFinish(
+        conn,
+        error = "No human reviewer exists with id ",
+        id,
+        ". Omit id to create new reviewer"
+      )
+    }
+  } else {
+    reviewer <- data.frame(
+      human = T,
+      username = missingVal(username),
+      first_name = missingVal(first),
+      last_name = missingVal(last),
+      note = missingVal(note)
+    )
+  }
+
+  if (is.na(reviewer$username)) {
+    dbFinish(conn, error = "A human reviewer needs at least a username")
+  }
+}
+
+dbReviewerAI <- function(
+  dbInfo,
+  id,
+  model,
+  note,
+  commit = T
+) {
+  conn <- dbGetConn(dbInfo)
+  on.exit(dbFinish(conn, commit = F, showWarnings = F))
+
+  if (!missing(id)) {
+    reviewer <- tbl(conn, "reviewer") |> filter(id == {{ id }}, human == 0)
+
+    if (nrow(reviewer) == 0) {
+      dbFinish(conn, error = "No AI reviewer existis with id ", id)
+    }
+  } else {
+    reviewer <- data.frame(
+      model = ifelse(missing(model), NA, model),
+      note = ifelse(missing(note), NA, note)
+    )
+  }
+
+  if (is.na(reviewer$model)) {
+    dbFinish(conn, error = "An AI reviewer needs a valid model name")
+  }
+}
+
+dbReviewer <- function(dbInfo, data) {}

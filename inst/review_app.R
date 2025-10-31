@@ -2,8 +2,8 @@ library(shiny)
 library(DT)
 library(stringr)
 
-# dbInfo <- "local/test.db"
 dbInfo <- "../local/test.db"
+# dbInfo <- "../local/dev.db"
 
 ui <- fluidPage(
   # Layout
