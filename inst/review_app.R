@@ -2,28 +2,6 @@ library(shiny)
 library(DT)
 library(stringr)
 
-mod_highlight_ui <- function(id) {
-  ns <- NS(id)
-  tagList(
-    # Capture highlighted text on the screen
-    tags$script(HTML(sprintf(
-      "
-      document.addEventListener('mouseup', function() {
-        var selected = window.getSelection().toString();
-        Shiny.setInputValue('%s', selected);
-      });
-    ",
-      ns("highlighted_text")
-    ))),
-    actionButton(ns("addSel"), "Add highlighted"),
-    uiOutput(ns(id, "selList"))
-  )
-}
-
-mod_highlight_server <- function(id) {
-  moduleServer(id, function(input, output, session) {})
-}
-
 # dbInfo <- "local/test.db"
 dbInfo <- "../local/test.db"
 
@@ -46,14 +24,15 @@ ui <- fluidPage(
         h3("Rubric"),
         selectInput("cID", "Competency", choices = NULL),
         uiOutput("compDescr"),
-        textInput(
-          "txtEvidence",
-          "Text evidence",
-          placeholder = "Copy-paste pieces of text, separate by ; if multiple"
-        ),
+        mod_highlight_ui("highlights", "evaluation", "Text evidence"),
         radioButtons("spec", "Specificity score", choices = c(1:4), inline = T),
         radioButtons("util", "Utility score", choices = c(1:3), inline = T),
         radioButtons("sent", "Sentiment score", choices = c(1:5), inline = T),
+        textAreaInput(
+          "comment",
+          "Optional comment",
+          placeholder = "Use this for highlighting rubric issues"
+        ),
         actionButton("add", "Add competency review")
       )
     )
@@ -141,12 +120,36 @@ server <- function(input, output, session) {
     )
   )
 
+  defaultEvidence <- reactiveVal(c())
+  resetSel <- reactiveVal()
+  txtEvidence <- mod_highlight_server(
+    "highlights",
+    defaults = defaultEvidence,
+    reset = resetSel
+  )
+
   # Reset rubric on competency change
   observeEvent(input$cID, {
-    updateRadioButtons(inputId = "spec", selected = 1)
-    updateRadioButtons(inputId = "util", selected = 1)
-    updateRadioButtons(inputId = "sent", selected = 1)
-    updateTextInput(inputId = "txtEvidence", value = "")
+    if (
+      is.null(compReviews()) ||
+        !as.integer(input$cID) %in% compReviews()$competency_id
+    ) {
+      updateRadioButtons(inputId = "spec", selected = 1)
+      updateRadioButtons(inputId = "util", selected = 1)
+      updateRadioButtons(inputId = "sent", selected = 1)
+      updateActionButton(inputId = "add", label = "Add competency review")
+      defaultEvidence(c())
+      resetSel(Sys.time())
+      return()
+    }
+    print("prev")
+    prev <- compReviews() |> filter(competency_id == as.integer(input$cID))
+    updateRadioButtons(inputId = "spec", selected = prev$spec)
+    updateRadioButtons(inputId = "util", selected = prev$util)
+    updateRadioButtons(inputId = "sent", selected = prev$sent)
+    updateActionButton(inputId = "add", label = "Update competency review")
+    defaultEvidence(str_split(prev$text_matches, "; ")[[1]])
+    resetSel(Sys.time())
   })
 
   output$compDescr <- renderUI({
@@ -172,7 +175,7 @@ server <- function(input, output, session) {
         ) |>
           pull(evaluation)
       ),
-      style = "max-height: 600px; overflow-y: auto;"
+      style = "max-height: 700px; overflow-y: auto;"
     )
   })
 
@@ -180,49 +183,47 @@ server <- function(input, output, session) {
 
   # Add or update a competency review
   observeEvent(input$add, {
-    check <- str_trim(input$txtEvidence) != ""
-    if (!check) {
+    evidence <- str_trim(txtEvidence()$text) |> paste(collapse = "; ")
+    if (evidence == "") {
       showModal(modalDialog(
         HTML(
-          "Please make sure to provide text evidence",
-          "by copy-pasting text from the evaluation. Separate multiple pieces",
-          "using the semi-colon if needed.<b>;</b><br><br><i>Example</i><br>",
-          "text evidence 1; text evidence 2"
+          "Please make sure to provide miminal text evidence by higlighting",
+          "pieces of text and clicking the 'Add highlighted' button in the rubric"
         ),
-        title = "Text evidence issue"
+        title = "Text evidence missing"
       ))
     }
 
-    req(check)
+    req(evidence != "")
 
-    # Check if the text evidence is copy pasted
-    check <- str_split(input$txtEvidence, ";")[[1]] |> str_squish()
-
-    curEval <- dbGetEvals(
-      ids = as.integer(input$evalID),
-      dbInfo = dbInfo,
-      redacted = T,
-      includeQuestions = input$showQuestions,
-      html = F
-    ) |>
-      pull(evaluation) |>
-      str_squish()
-
-    check <- all(str_detect(curEval, fixed(check)))
-
-    if (!check) {
-      showModal(modalDialog(
-        HTML(
-          "Please make sure you copy-paste text evidence exactly",
-          "from the evaluation and separate multiple pieces by using a",
-          "the semi-colon <b>;</b><br><br><i>Example</i><br>",
-          "text evidence 1; text evidence 2"
-        ),
-        title = "Text evidence issue"
-      ))
-    }
-
-    req(check)
+    # # Check if the text evidence is copy pasted
+    # check <- str_split(input$txtEvidence, ";")[[1]] |> str_squish()
+    #
+    # curEval <- dbGetEvals(
+    #   ids = as.integer(input$evalID),
+    #   dbInfo = dbInfo,
+    #   redacted = T,
+    #   includeQuestions = input$showQuestions,
+    #   html = F
+    # ) |>
+    #   pull(evaluation) |>
+    #   str_squish()
+    #
+    # check <- all(str_detect(curEval, fixed(check)))
+    #
+    # if (!check) {
+    #   showModal(modalDialog(
+    #     HTML(
+    #       "Please make sure you copy-paste text evidence exactly",
+    #       "from the evaluation and separate multiple pieces by using a",
+    #       "the semi-colon <b>;</b><br><br><i>Example</i><br>",
+    #       "text evidence 1; text evidence 2"
+    #     ),
+    #     title = "Text evidence issue"
+    #   ))
+    # }
+    #
+    # req(check)
 
     #Update the competency reviews data frame
     if (input$cID %in% compReviews()$competency_id) {
@@ -238,11 +239,13 @@ server <- function(input, output, session) {
           specificity = as.integer(input$spec),
           utility = as.integer(input$util),
           sentiment = as.integer(input$sent),
-          text_matches = input$txtEvidence
+          text_matches = evidence
         ),
         compReviews()
       )
     )
+
+    updateActionButton(inputId = "add", label = "Update competency review")
   })
 
   output$review <- renderDT(
