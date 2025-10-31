@@ -7,14 +7,42 @@ dbInfo <- "../local/test.db"
 
 ui <- fluidPage(
   # Layout
+  wellPanel(
+    fluidRow(
+      column(
+        4,
+        h3("1. Select Reviewer"),
+        selectInput("reviewerID", "Reviewer", choices = c()),
+        HTML(
+          "<i>A <b>reviewer</b> is the person who is assessing the quality of an evaluation here<br>",
+          "An <b>evaluator</b> is the person who wrote the student evaluation below</i>"
+        )
+      ),
+      column(
+        4,
+        h3("2. Pick an evaluation"),
+        selectInput(
+          "evalID",
+          "0 to start - 0 in progress - 0 competed",
+          choices = c()
+        ),
+        checkboxInput("includeCompeted", "List completed", value = F),
+        checkboxInput("showQuestions", "Show questions", value = T),
+      ),
+      column(
+        4,
+        h3("3. Submit once complete"),
+        textAreaInput("generalComment", "Optional comment"),
+        checkboxInput("flag", "Add issue flag"),
+        actionButton("complete", "Mark as complete")
+      )
+    ),
+  ),
   fluidRow(
     column(
       6,
       wellPanel(
         h3("Student evaluation"),
-        selectInput("evalID", "Select an evaluation", choices = c()),
-        checkboxInput("showQuestions", "Show questions", value = T),
-        tags$hr(),
         uiOutput("evaluation")
       )
     ),
