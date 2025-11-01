@@ -146,7 +146,7 @@ llm_call <- function(user, system, model, maxTokens, version, endpoint, log) {
 #'
 #' @returns A list with 4 elements
 #' - statusCode = final status code (3 = success)
-#' - review_response_id: ID from review_response table in database
+#' - review_assignment_id: ID from review_assignment table in database
 #' - data: If successful, data frame with response, otherwise NULL
 #' - tries: Number of times tried for valid response
 #' @export
@@ -228,7 +228,7 @@ llm_review <- function(
     check <- llm_csv_response(result$choices[[1]]$message$content)
 
     # Add the response metadata
-    review_response <- data.frame(
+    review_assignment <- data.frame(
       evaluation_id = evaluation_id,
       review_prompt_id = review_prompt_id,
       reviewer_id = reviewer_id,
@@ -240,10 +240,10 @@ llm_review <- function(
       duration = duration
     )
 
-    review_response_id <- tbl_insert(
-      review_response,
+    review_assignment_id <- tbl_insert(
+      review_assignment,
       conn,
-      "review_response",
+      "review_assignment",
       commit = T
     ) |>
       pull(id)
@@ -260,7 +260,7 @@ llm_review <- function(
   return(list(
     statusCode = check$statusCode,
     evaluation_id = evaluation_id,
-    review_response_id = review_response_id,
+    review_assignment_id = review_assignment_id,
     data = check$data,
     tries = i
   ))

@@ -54,7 +54,7 @@ CREATE TABLE "answer" (
   "question_id" INTEGER NOT NULL,
   "evaluation_id" INTEGER NOT NULL,
   "submission_date" TEXT NOT NULL,
-  "answer_txt" TEXT NOT NULL,
+  "answer_txt" TEXT,
   "answer_txt_redacted" TEXT,
   "rowid" INTEGER,
   FOREIGN KEY ("evaluation_id") REFERENCES "evaluation"("id") ON DELETE CASCADE,
@@ -80,7 +80,7 @@ CREATE TABLE "review_prompt" (
   "note" TEXT
 );
 
-CREATE TABLE "review_response" (
+CREATE TABLE "review_assignment" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
   "evaluation_id" INTEGER NOT NULL,
@@ -92,6 +92,7 @@ CREATE TABLE "review_response" (
   "tokens_in" INTEGER,
   "tokens_out" INTEGER,
   "duration" REAL,
+  "note" TEXT,
   FOREIGN KEY ("evaluation_id") REFERENCES "evaluation"("id") ON DELETE CASCADE,
   FOREIGN KEY ("review_prompt_id") REFERENCES "review_prompt"("id") ON DELETE CASCADE,
   FOREIGN KEY ("reviewer_id") REFERENCES "reviewer"("id") ON DELETE CASCADE
@@ -99,11 +100,11 @@ CREATE TABLE "review_response" (
 
 CREATE TABLE "review_score" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "review_response_id" INTEGER NOT NULL,
+  "review_assignment_id" INTEGER NOT NULL,
   "competency_id" INTEGER NOT NULL,
   "specificity" INTEGER NOT NULL,
   "utility" INTEGER NOT NULL,
   "sentiment" INTEGER NOT NULL,
   "text_matches" TEXT,
-  FOREIGN KEY ("review_response_id") REFERENCES "review_response"("id") ON DELETE CASCADE
+  FOREIGN KEY ("review_assignment_id") REFERENCES "review_assignment"("id") ON DELETE CASCADE
 );

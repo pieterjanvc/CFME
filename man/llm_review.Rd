@@ -35,7 +35,7 @@ not in a valid format}
 A list with 4 elements
 \itemize{
 \item statusCode = final status code (3 = success)
-\item review_response_id: ID from review_response table in database
+\item review_assignment_id: ID from review_assignment table in database
 \item data: If successful, data frame with response, otherwise NULL
 \item tries: Number of times tried for valid response
 }

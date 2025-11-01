@@ -86,7 +86,7 @@ server <- function(input, output, session) {
     req(input$evalID)
 
     # Check if the eval was already reviewed and use the same prompt version
-    review_prompt_id <- tbl(conn, "review_response") |>
+    review_prompt_id <- tbl(conn, "review_assignment") |>
       filter(evaluation_id == as.integer(input$evalID)) |>
       pull(review_prompt_id)
 

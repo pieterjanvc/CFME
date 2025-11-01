@@ -91,3 +91,21 @@ missingVal <- function(var, useNull = F, n = 1) {
     rep(NA, n)
   }
 }
+
+
+#' Get the set (function) arguments of the current environment
+#'
+#' This is useful at the start of a function to capture all passed arguments
+#'
+#' @returns A list with the set function arguments and their values
+#'
+getFunArgs <- function(exclude) {
+  x <- as.list(parent.frame())
+  x <- x[!names(x) %in% exclude]
+  x <- x[sapply(x, function(x) typeof(x) != "symbol")]
+  if (length(x) == 0) {
+    NULL
+  } else {
+    x
+  }
+}

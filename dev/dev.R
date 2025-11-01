@@ -1,7 +1,7 @@
-# devtools::install_github("pieterjanvc/sqlife", ref = "v0.1.2")
+# devtools::install_github("pieterjanvc/sqlife", ref = "notNUllUpdate")
 
 dbInfo <- "local/test.db"
-dbInfo <- "local/dev.db"
+# dbInfo <- "local/dev.db"
 
 # Start from scratch ----
 # ***********************
@@ -14,7 +14,7 @@ combined_data <- readxl::read_xlsx(
   "local/BIDMC_Med_Neuro_SPE_Comments_Dataset_07242025.xlsx"
 )
 
-dbAddEvaluations(combined_data, dbInfo)
+dbAddEvaluations(combined_data, dbInfo, redactedOnly = T)
 
 
 # Run eval through LLM and insert into DB
@@ -76,3 +76,11 @@ evaluation_ids <- c(120, 241, 734, 1209, 1236, 1636, 1693, 1968, 1979, 2022)
 evals <- dbGetEvals(evaluation_ids, dbInfo)
 
 dbDisconnect(conn)
+
+
+dbReviewAssignment(
+  dbInfo,
+  reviewer_id = 1,
+  evaluation_id = 1,
+  review_prompt_id = 1
+)

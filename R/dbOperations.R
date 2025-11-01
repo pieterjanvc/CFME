@@ -2,6 +2,8 @@
 #'
 #' @param combined_data Dataframe of the original data
 #' @param dbInfo connection or path to an SQLite database
+#' @param redactedOnly (Default = FALSE) If TRUE, only redacted evlaluations are
+#' put into the database the version with identifiers is omitted
 #'
 #' @import dplyr
 #' @import RSQLite
@@ -11,7 +13,7 @@
 #' @returns TRUE if success
 #' @export
 #'
-dbAddEvaluations <- function(combined_data, dbInfo) {
+dbAddEvaluations <- function(combined_data, dbInfo, redactedOnly = F) {
   # Lowercase for all columnnames
   colnames(combined_data) <- str_replace_all(
     tolower(colnames(combined_data)),
@@ -186,7 +188,11 @@ dbAddEvaluations <- function(combined_data, dbInfo) {
       question_id,
       evaluation_id,
       submission_date,
-      answer_txt,
+      if (redactedOnly) {
+        NULL
+      } else {
+        "answer_txt"
+      },
       answer_txt_redacted,
       rowid
     ) |>
@@ -241,6 +247,10 @@ dbAddEvaluations <- function(combined_data, dbInfo) {
     )
   }
 
+  if (redactedOnly) {
+    check <- check |> select(-answer_txt)
+  }
+
   missingVals <- check[!complete.cases(check), ]
 
   if (nrow(missingVals) > 0) {
@@ -250,9 +260,7 @@ dbAddEvaluations <- function(combined_data, dbInfo) {
     )
   }
 
-  if (is.character(dbInfo)) {
-    dbFinish(conn)
-  }
+  dbFinish(conn)
 
   return(T)
 }
@@ -395,7 +403,7 @@ dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
 #'
 #' @returns A data frame with the following columns:
 #' - evaluation_id,
-#' - review_response_id,
+#' - review_assignment_id,
 #' - review_score_id: the ID for the each detected competency review scores
 #' @export
 #'
@@ -404,12 +412,12 @@ dbAddLLMreview <- function(dbInfo, llm_review) {
 
   # Check if not already in database
   check <- tbl(conn, "review_score") |>
-    filter(review_response_id == llm_review$review_response_id) |>
-    pull(review_response_id)
+    filter(review_assignment_id == llm_review$review_assignment_id) |>
+    pull(review_assignment_id)
 
   if (length(check) > 0) {
     warning(
-      "The llm evaluation with review_response_id ",
+      "The llm evaluation with review_assignment_id ",
       check,
       "is already in the database"
     )
@@ -423,7 +431,7 @@ dbAddLLMreview <- function(dbInfo, llm_review) {
 
   # Add the evaluation data
   data <- llm_review$data
-  data$review_response_id = llm_review$review_response_id
+  data$review_assignment_id = llm_review$review_assignment_id
   data <- data |>
     rename(
       competency_id = cID,
@@ -443,7 +451,7 @@ dbAddLLMreview <- function(dbInfo, llm_review) {
 
   return(data.frame(
     evaluation_id = llm_review$evaluation_id,
-    review_response_id = llm_review$review_response_id,
+    review_assignment_id = llm_review$review_assignment_id,
     review_score_id = review_score_id
   ))
 }
@@ -491,7 +499,7 @@ dbReviewerHuman <- function(
   note,
   commit = T
 ) {
-  conn <- dbGetConn(dbInfo)
+  conn <- dbGetConn(dbInfo, startTransaction = T)
 
   if (!missing(id)) {
     check <- id
@@ -537,7 +545,7 @@ dbReviewerHuman <- function(
 
   result <- dbReviewer(conn, reviewer)
 
-  dbFinish(conn)
+  dbFinish(conn, commit = commit)
 
   return(result)
 }
@@ -562,7 +570,7 @@ dbReviewerAI <- function(
   note,
   commit = T
 ) {
-  conn <- dbGetConn(dbInfo)
+  conn <- dbGetConn(dbInfo, startTransaction = T)
 
   if (!missing(id)) {
     check <- id
@@ -606,7 +614,75 @@ dbReviewerAI <- function(
 
   result <- dbReviewer(conn, reviewer)
 
-  dbFinish(conn)
+  dbFinish(conn, commit = commit)
+
+  return(result)
+}
+
+#' Insert or update a review assignment
+#'
+#' @param dbInfo dbInfo object
+#' @param id (Optional) Review assignment ID. If not set, new entry is created
+#' @param reviewer_id (Required if id not set)
+#' @param evaluation_id (Required if id not set)
+#' @param review_prompt_id (Required if id not set)
+#' @param include_questions (Optional value)
+#' @param redacted (Optional value)
+#' @param duration (Optional value)
+#' @param statusCode (Optional value)
+#' @param tokens_in (Optional value)
+#' @param tokens_out (Optional value)
+#' @param note (Optional value)
+#' @param timestamp (Optional value)
+#' @param commit (Default = T)
+#'
+#' @returns A data frame with inserted / updated database records in review_assignment table
+#' @export
+dbReviewAssignment <- function(
+  dbInfo,
+  id,
+  reviewer_id,
+  evaluation_id,
+  review_prompt_id,
+  include_questions,
+  redacted,
+  duration,
+  statusCode,
+  tokens_in,
+  tokens_out,
+  note,
+  timestamp,
+  commit = T
+) {
+  data <- getFunArgs(c("dbInfo", "commit")) |> as.data.frame()
+
+  conn <- dbGetConn(dbInfo, startTransaction = T)
+  if (missing(id)) {
+    # New
+    data$statusCode = 0
+    if (missing(redacted)) {
+      data$redacted = T
+    } else {
+      redactedOnly <- tbl(conn, "answer") |>
+        slice_sample(n = 5) |>
+        pull(answer_txt) |>
+        is.na() |>
+        sum() ==
+        5
+      if (redactedOnly & redacted == F) {
+        dbFinish(
+          conn,
+          error = "This database only contains redacted evaluations"
+        )
+      }
+    }
+    result <- tbl_insert(data, conn, "review_assignment", commit = F)
+  } else {
+    # Existing
+    result <- tbl_update(data, conn, "review_assignment", commit = F)
+  }
+
+  dbFinish(conn, commit = commit)
 
   return(result)
 }

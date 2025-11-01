@@ -15,7 +15,7 @@ dbAddLLMreview(dbInfo, llm_review)
 A data frame with the following columns:
 \itemize{
 \item evaluation_id,
-\item review_response_id,
+\item review_assignment_id,
 \item review_score_id: the ID for the each detected competency review scores
 }
 }
