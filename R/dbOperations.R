@@ -521,12 +521,15 @@ dbReviewerHuman <- function(
     dbFinish(conn, error = "A new human reviewer needs at least a username")
   } else {
     check <- tbl(conn, "reviewer") |>
-      filter(username == {{ username }}) |>
-      pull(id)
+      filter(username %in% {{ username }}) |>
+      pull(username)
     if (length(check) > 0) {
       dbFinish(
         conn,
-        error = sprintf("A reviewer with username %s already exists", username)
+        error = sprintf(
+          "Reviewers with username %s already exist",
+          paste(check, collapse = ", ")
+        )
       )
     }
   }
@@ -676,6 +679,33 @@ dbReviewAssignment <- function(
         )
       }
     }
+
+    # Check prompt
+    if (missing(review_prompt_id)) {
+      review_prompt_id <- tbl(conn, "review_prompt") |>
+        filter(id == max(id)) |>
+        pull(id)
+      if (length(review_prompt_id) == 0) {
+        dbFinish(
+          conn,
+          error = "You need to add at least one prompt before assigning reviews"
+        )
+      }
+    } else {
+      review_prompt_id <- tbl(conn, "review_prompt") |>
+        filter(id == local(review_prompt_id)) |>
+        pull(id)
+
+      if (length(review_prompt_id) == 0) {
+        dbFinish(
+          conn,
+          error = "The provided review_prompt_id does not exist"
+        )
+      }
+    }
+
+    data$review_prompt_id = review_prompt_id
+
     result <- tbl_insert(data, conn, "review_assignment", commit = F)
   } else {
     # Existing

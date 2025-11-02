@@ -1,6 +1,7 @@
 # devtools::install_github("pieterjanvc/sqlife", ref = "notNUllUpdate")
 
 dbInfo <- "local/test.db"
+usernames <- c("PJ", "TK", "AW")
 # dbInfo <- "local/dev.db"
 
 # Start from scratch ----
@@ -9,21 +10,35 @@ if (file.exists(dbInfo)) {
   file.remove(dbInfo)
 }
 
+# Setup DB and add evaluation data
 dbSetup(dbInfo, "inst/cfme.sql", validateSchema = T)
+conn <- dbGetConn(dbInfo)
 combined_data <- readxl::read_xlsx(
   "local/BIDMC_Med_Neuro_SPE_Comments_Dataset_07242025.xlsx"
 )
-
 dbAddEvaluations(combined_data, dbInfo, redactedOnly = T)
-
+# Add human reviewers
+dbReviewerHuman(dbInfo, username = usernames)
+# Add prompt
+prompt <- readLines("inst/rubricPrompt.txt") |> paste(collapse = "\n")
+review_prompt_id <- dbAddPrompt(prompt, dbInfo)
+# Assign the same n random evals to each reviewer
+evalSample <-
+  tbl(conn, "evaluation") |>
+  group_by(summary_flg, complete) |>
+  slice_sample(n = 5) |>
+  pull(id)
+dbReviewAssignment(
+  dbInfo,
+  reviewer_id = rep(1:3, each = 15),
+  evaluation_id = evalSample,
+  redacted = T,
+  include_questions = T
+)
+dbFinish(conn)
 
 # Run eval through LLM and insert into DB
 # ***************************************
-
-prompt <- readLines("inst/rubricPrompt.txt") |> paste(collapse = "\n")
-review_prompt_id <- dbAddPrompt(prompt, dbInfo)
-
-
 test <- llm_review(
   dbInfo,
   review_prompt_id = 1,
@@ -84,3 +99,12 @@ dbReviewAssignment(
   evaluation_id = 1,
   review_prompt_id = 1
 )
+
+
+test <- function(x) {
+  stop("oh no ...", call. = F)
+}
+
+iris |>
+  group_by(Species) |>
+  slice_sample(n = ifelse(Species == "Versicolor", 2, 5))

@@ -22,7 +22,7 @@ ui <- fluidPage(
         4,
         h3("2. Pick an evaluation"),
         selectInput(
-          "evalID",
+          "reviewID",
           "0 to start - 0 in progress - 0 competed",
           choices = c()
         ),
@@ -75,79 +75,9 @@ server <- function(input, output, session) {
     dbFinish(conn)
   })
 
-  # For now select random IDs
-  evalIDs <- tbl(conn, "evaluation") |>
-    slice_sample(n = 10) |>
-    pull(id) |>
-    sort()
+  reviewScores <- reactiveVal()
 
-  # Get the prompt and use it to create the rubric
-  prompt <- reactive({
-    req(input$evalID)
-
-    # Check if the eval was already reviewed and use the same prompt version
-    review_prompt_id <- tbl(conn, "review_assignment") |>
-      filter(evaluation_id == as.integer(input$evalID)) |>
-      pull(review_prompt_id)
-
-    # Otherwise use the latest prompt version
-    if (length(review_prompt_id) == 0) {
-      review_prompt_id <- tbl(conn, "review_prompt") |>
-        filter(id == max(id)) |>
-        pull(id)
-    }
-
-    # Get the prompt text and parse it
-    text <- tbl(conn, "review_prompt") |>
-      filter(id == review_prompt_id) |>
-      pull(prompt)
-    parsed <- parsePrompt(text)
-
-    # Update all inputs based on rubric phrasing
-    updateSelectInput(
-      inputId = "cID",
-      choices = setNames(
-        1:6,
-        sapply(parsed$content$competencies, "[[", "name")
-      )
-    )
-    updateRadioButtons(
-      inputId = "spec",
-      label = parsed$content$scoring$spec$desciption,
-      choices = setNames(
-        1:length(parsed$content$scoring$spec$options),
-        parsed$content$scoring$spec$options
-      )
-    )
-    updateRadioButtons(
-      inputId = "util",
-      label = parsed$content$scoring$util$desciption,
-      choices = setNames(
-        1:length(parsed$content$scoring$util$options),
-        parsed$content$scoring$util$options
-      )
-    )
-    updateRadioButtons(
-      inputId = "sent",
-      label = parsed$content$scoring$sent$desciption,
-      choices = setNames(
-        1:length(parsed$content$scoring$sent$options),
-        parsed$content$scoring$sent$options
-      )
-    )
-    list(text = text, parsed = parsed)
-  })
-
-  # Set the eval IDs
-  updateSelectInput(
-    session,
-    "evalID",
-    choices = setNames(
-      evalIDs,
-      paste("Evaluation", evalIDs)
-    )
-  )
-
+  # Highlight selection module
   defaultEvidence <- reactiveVal(c())
   resetSel <- reactiveVal()
   txtEvidence <- mod_highlight_server(
@@ -156,11 +86,152 @@ server <- function(input, output, session) {
     reset = resetSel
   )
 
+  # Populate reviewers
+  x <- tbl(conn, "reviewer") |>
+    filter(human == 1) |>
+    select(id, username) |>
+    collect()
+
+  updateSelectInput(session, "reviewerID", choices = setNames(x$id, x$username))
+
+  # Populate evaluations
+  observeEvent(c(input$reviewerID, input$includeCompeted), {
+    reviews <- tbl(conn, "review_assignment") |>
+      filter(reviewer_id == as.integer(input$reviewerID)) |>
+      arrange(statusCode, evaluation_id) |>
+      collect() |>
+      mutate(
+        descr = sprintf(
+          "Evaluation %s - %s",
+          evaluation_id,
+          case_when(
+            statusCode == 0 ~ "New",
+            statusCode == 1 ~ "In progress",
+            statusCode == 2 ~ "Completed",
+            statusCode == -1 ~ "Completed with flag",
+            TRUE ~ "Error"
+          )
+        )
+      )
+
+    lblInfo <- reviews |>
+      filter(statusCode < 3) |>
+      group_by(statusCode) |>
+      summarise(n = n())
+
+    lblInfo <- data.frame(statusCode = 0:2) |>
+      left_join(lblInfo, by = "statusCode") |>
+      mutate(n = ifelse(is.na(n), 0, n)) |>
+      pull(n)
+
+    # Set the eval IDs
+    updateSelectInput(
+      session,
+      "reviewID",
+      label = sprintf(
+        "%i to start - %i in progress - %i competed",
+        lblInfo[1],
+        lblInfo[2],
+        lblInfo[3]
+      ),
+      choices = setNames(
+        reviews$id,
+        reviews$descr
+      )
+    )
+  })
+
+  # Get the prompt and use it to create the rubric
+  prompt <- eventReactive(
+    input$reviewID,
+    {
+      reviewID <- as.integer(input$reviewID)
+      print("HI")
+      # Get any previous scores
+      scores <- tbl(conn, "review_score") |>
+        filter(review_assignment_id == reviewID) |>
+        select(competency_id, specificity, utility, sentiment, text_matches) |>
+        collect()
+
+      # Check if the eval was already reviewed and use the same prompt version
+      review_prompt_id <- tbl(conn, "review_assignment") |>
+        filter(id == as.integer(input$reviewID)) |>
+        pull(review_prompt_id)
+
+      # Otherwise use the latest prompt version
+      if (length(review_prompt_id) == 0) {
+        review_prompt_id <- tbl(conn, "review_prompt") |>
+          filter(id == max(id)) |>
+          pull(id)
+      }
+
+      # Get the prompt text and parse it
+      text <- tbl(conn, "review_prompt") |>
+        filter(id == review_prompt_id) |>
+        pull(prompt)
+      parsed <- parsePrompt(text)
+
+      # Update all inputs based on rubric phrasing
+      updateSelectInput(
+        inputId = "cID",
+        choices = setNames(
+          1:6,
+          sapply(parsed$content$competencies, "[[", "name")
+        )
+      )
+      updateRadioButtons(
+        inputId = "spec",
+        label = parsed$content$scoring$spec$desciption,
+        choices = setNames(
+          1:length(parsed$content$scoring$spec$options),
+          parsed$content$scoring$spec$options
+        ),
+        selected = ifelse(
+          length(scores$specificity) == 0,
+          1,
+          scores$specificity
+        )
+      )
+      updateRadioButtons(
+        inputId = "util",
+        label = parsed$content$scoring$util$desciption,
+        choices = setNames(
+          1:length(parsed$content$scoring$util$options),
+          parsed$content$scoring$util$options
+        ),
+        selected = ifelse(length(scores$utility) == 0, 1, scores$utility)
+      )
+      updateRadioButtons(
+        inputId = "sent",
+        label = parsed$content$scoring$sent$desciption,
+        choices = setNames(
+          1:length(parsed$content$scoring$sent$options),
+          parsed$content$scoring$sent$options
+        ),
+        selected = ifelse(length(scores$sentiment) == 0, 1, scores$sentiment)
+      )
+
+      # Set the highlighted text list in the module
+      txt <- str_split(scores$text_matches, "; ")
+      if (length(txt) == 0) {
+        txt <- list(c())
+      }
+      defaultEvidence(txt[[1]])
+      resetSel(Sys.time())
+
+      # Update the competency review var
+      reviewScores(scores)
+
+      list(text = text, parsed = parsed)
+    },
+    ignoreInit = T
+  )
+
   # Reset rubric on competency change
   observeEvent(input$cID, {
     if (
-      is.null(compReviews()) ||
-        !as.integer(input$cID) %in% compReviews()$competency_id
+      is.null(reviewScores()) ||
+        !as.integer(input$cID) %in% reviewScores()$competency_id
     ) {
       updateRadioButtons(inputId = "spec", selected = 1)
       updateRadioButtons(inputId = "util", selected = 1)
@@ -170,8 +241,7 @@ server <- function(input, output, session) {
       resetSel(Sys.time())
       return()
     }
-    print("prev")
-    prev <- compReviews() |> filter(competency_id == as.integer(input$cID))
+    prev <- reviewScores() |> filter(competency_id == as.integer(input$cID))
     updateRadioButtons(inputId = "spec", selected = prev$spec)
     updateRadioButtons(inputId = "util", selected = prev$util)
     updateRadioButtons(inputId = "sent", selected = prev$sent)
@@ -190,11 +260,16 @@ server <- function(input, output, session) {
 
   # The UI that shows the evaluation
   output$evaluation <- renderUI({
-    req(input$evalID)
+    req(input$reviewID)
+    # Get the evaluation ID for the assigned review
+    evalID <- tbl(conn, "review_assignment") |>
+      filter(id == as.integer(input$reviewID)) |>
+      pull(evaluation_id)
+
     div(
       HTML(
         dbGetEvals(
-          ids = as.integer(input$evalID),
+          ids = evalID,
           dbInfo = dbInfo,
           redacted = T,
           includeQuestions = input$showQuestions,
@@ -206,8 +281,6 @@ server <- function(input, output, session) {
       style = "max-height: 700px; overflow-y: auto;"
     )
   })
-
-  compReviews <- reactiveVal()
 
   # Add or update a competency review
   observeEvent(input$add, {
@@ -224,63 +297,42 @@ server <- function(input, output, session) {
 
     req(evidence != "")
 
-    # # Check if the text evidence is copy pasted
-    # check <- str_split(input$txtEvidence, ";")[[1]] |> str_squish()
-    #
-    # curEval <- dbGetEvals(
-    #   ids = as.integer(input$evalID),
-    #   dbInfo = dbInfo,
-    #   redacted = T,
-    #   includeQuestions = input$showQuestions,
-    #   html = F
-    # ) |>
-    #   pull(evaluation) |>
-    #   str_squish()
-    #
-    # check <- all(str_detect(curEval, fixed(check)))
-    #
-    # if (!check) {
-    #   showModal(modalDialog(
-    #     HTML(
-    #       "Please make sure you copy-paste text evidence exactly",
-    #       "from the evaluation and separate multiple pieces by using a",
-    #       "the semi-colon <b>;</b><br><br><i>Example</i><br>",
-    #       "text evidence 1; text evidence 2"
-    #     ),
-    #     title = "Text evidence issue"
-    #   ))
-    # }
-    #
-    # req(check)
-
     #Update the competency reviews data frame
-    if (input$cID %in% compReviews()$competency_id) {
-      compReviews(compReviews()[
-        -c(input$cID %in% compReviews()$competency_id),
+    if (input$cID %in% reviewScores()$competency_id) {
+      reviewScores(reviewScores()[
+        -c(input$cID %in% reviewScores()$competency_id),
       ])
     }
 
-    compReviews(
-      rbind(
-        data.frame(
-          competency_id = as.integer(input$cID),
-          specificity = as.integer(input$spec),
-          utility = as.integer(input$util),
-          sentiment = as.integer(input$sent),
-          text_matches = evidence
-        ),
-        compReviews()
-      )
+    changed <- data.frame(
+      competency_id = as.integer(input$cID),
+      specificity = as.integer(input$spec),
+      utility = as.integer(input$util),
+      sentiment = as.integer(input$sent),
+      text_matches = evidence
     )
+
+    id <- reviewScores() |>
+      filter(competency_id == as.integer(input$cID)) |>
+      pull(id)
+
+    if (length(id) > 0) {
+      changed$id = id
+    }
+
+    #TODO add / update review
+    changed <- dbReviewScore(dbInfo, changed)
+
+    reviewScores(rbind(changed, reviewScores()))
 
     updateActionButton(inputId = "add", label = "Update competency review")
   })
 
   output$review <- renderDT(
     {
-      req(compReviews())
+      req(reviewScores())
       # Replace ID with the competency description
-      compReviews() |>
+      reviewScores() |>
         left_join(
           data.frame(
             competency_id = 1:6,
@@ -293,7 +345,7 @@ server <- function(input, output, session) {
           ),
           by = "competency_id"
         ) |>
-        select(-competency_id) |>
+        select(-competency_id, -review_score_id) |>
         select(competency, everything())
     },
     rownames = F

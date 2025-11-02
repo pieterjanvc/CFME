@@ -22,6 +22,8 @@ llm_review(
 
 \item{evaluation_id}{Evlaution to use}
 
+\item{model}{(Optional) The LLM model to use. Defaults to model from llm_call function}
+
 \item{log}{(Optional) Save token usage to extra file (will also be in database)}
 
 \item{include_questions}{(Default = T) Include questions in prompt}

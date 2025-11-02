@@ -139,6 +139,7 @@ llm_call <- function(user, system, model, maxTokens, version, endpoint, log) {
 #' @param review_prompt_id System prompt to use for LLM
 #' @param evaluation_id Evlaution to use
 #' @param log (Optional) Save token usage to extra file (will also be in database)
+#' @param model (Optional) The LLM model to use. Defaults to model from llm_call function
 #' @param include_questions (Default = T) Include questions in prompt
 #' @param redacted (Default = T) Use redacted data
 #' @param maxTries (Default = 3) How many times to try in case the response is
@@ -218,11 +219,7 @@ llm_review <- function(
       pull(id)
 
     if (length(reviewer_id) == 0) {
-      reviewer <- data.frame(
-        human = 0,
-        model = result$model
-      )
-      reviewer_id <- tbl_insert(reviewer, dbInfo, "reviewer") |> pull(id)
+      reviewer_id <- dbReviewerAI(dbInfo, model = result$model) |> pull(id)
     }
 
     check <- llm_csv_response(result$choices[[1]]$message$content)
