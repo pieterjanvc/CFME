@@ -4,12 +4,22 @@
 \alias{llm_call}
 \title{Call an Azure LLM}
 \usage{
-llm_call(user, system, model, maxTokens, version, endpoint, log)
+llm_call(
+  user,
+  system,
+  log,
+  model = "gpt-4o-1120",
+  maxTokens = 500,
+  version = "2024-10-21",
+  endpoint = "https://azure-ai.hms.edu"
+)
 }
 \arguments{
 \item{user}{User prompt}
 
 \item{system}{Default = "You are a helpful AI assistant". System prompt}
+
+\item{log}{If set, the token usage is kept track of in this CSV file}
 
 \item{model}{Default = gpt-4o-1120. LLM model to use}
 
@@ -18,8 +28,6 @@ llm_call(user, system, model, maxTokens, version, endpoint, log)
 \item{version}{Default = 2024-10-21.}
 
 \item{endpoint}{Default = https://azure-ai.hms.edu. Azure endpoint}
-
-\item{log}{If set, the token usage is kept track of in this CSV file}
 }
 \value{
 LLM Response object (list).

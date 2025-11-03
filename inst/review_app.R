@@ -304,7 +304,7 @@ server <- function(input, output, session) {
       ])
     }
 
-    changed <- data.frame(
+    scores <- data.frame(
       competency_id = as.integer(input$cID),
       specificity = as.integer(input$spec),
       utility = as.integer(input$util),
@@ -317,13 +317,13 @@ server <- function(input, output, session) {
       pull(id)
 
     if (length(id) > 0) {
-      changed$id = id
+      scores$id = id
     }
 
     #TODO add / update review
-    changed <- dbReviewScore(dbInfo, changed)
+    scores <- dbReviewScore(dbInfo, scores)
 
-    reviewScores(rbind(changed, reviewScores()))
+    reviewScores(rbind(scores, reviewScores()))
 
     updateActionButton(inputId = "add", label = "Update competency review")
   })

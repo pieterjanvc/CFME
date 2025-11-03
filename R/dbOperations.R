@@ -269,9 +269,14 @@ dbAddEvaluations <- function(combined_data, dbInfo, redactedOnly = F) {
 #'
 #' @param ids A vector of evaluation IDs to retrieve text for
 #' @param dbInfo A DB connection or path
-#' @param redacted (Default = TRUE) Show redacted text
-#' @param includeQuestions (Default = TRUE) Add the questions to the text
-#' @param html (Default = FALSE) Output HTML instead of plain text
+#' @param redacted (Default = TRUE) Show redacted text.
+#' Can also be a vector of length ids
+#' @param includeQuestions (Default = TRUE) Add the questions to the text.
+#' Can also be a vector of length ids
+#' @param html (Default = FALSE) Output HTML instead of plain text.
+#' Can also be a vector of length ids
+#' @param subtitleTag (Default = "h3") In case of HTML = T which tag to use for
+#' questions (i.e. subtitle)
 #'
 #' @import dplyr
 #' @importFrom stringr str_trim
@@ -302,17 +307,23 @@ dbGetEvals <- function(
     ) |>
     left_join(tbl(conn, "clerkship"), by = c("clerkship_id" = "id")) |>
     collect() |>
+    left_join(
+      data.frame(
+        evaluation_id = ids,
+        redacted = redacted,
+        includeQuestions = includeQuestions,
+        html = html,
+        subtitleTag = subtitleTag
+      ),
+      by = "evaluation_id"
+    ) |>
     mutate(
-      answer = if (redacted) {
-        answer_txt_redacted
-      } else {
-        answer_txt
-      },
-      answer = if (html) {
-        str_replace_all(str_trim(answer), "\n", "<br>")
-      } else {
+      answer = ifelse(redacted, answer_txt_redacted, answer_txt),
+      answer = ifelse(
+        html,
+        str_replace_all(str_trim(answer), "\n", "<br>"),
         str_trim(answer)
-      }
+      )
     )
 
   evals <- evals |>
@@ -322,13 +333,15 @@ dbGetEvals <- function(
       complete = complete[1] == 1,
       clerkship = clerkship[1],
       evaluation = paste(
-        if (includeQuestions) {
+        ifelse(
+          includeQuestions[1],
           paste(
             ifelse(html, sprintf("<%s>", subtitleTag), "---"),
             question,
             ifelse(html, sprintf("</%s><br>", subtitleTag), "\n")
-          )
-        },
+          ),
+          ""
+        ),
         answer,
         sep = "",
         collapse = ifelse(html, "<br><br>", "\n\n")
@@ -392,11 +405,49 @@ dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
   return(promptID)
 }
 
+dbReviewScore <- function(dbInfo, scores, commit = T) {
+  conn <- dbGetConn(dbInfo, startTransaction = T)
+  cols <- colnames(scores)
+  if ("id" %in% cols) {
+    # Update
+    result <- tbl_update(scores, conn, "review_score", commit = F)
+  } else {
+    ## New
+    # check <- setdiff(
+    #   c(
+    #     "review_assignment_id",
+    #     "competency_id",
+    #     "specificity",
+    #     "utility",
+    #     "sentiment",
+    #     "text_matches"
+    #   ),
+    #   cols
+    # )
+    #
+    # if (length(check) > 0) {
+    #   dbFinish(
+    #     conn,
+    #     error = paste(
+    #       "The following scoring columns are missing:",
+    #       paste(check, collapse = "; ")
+    #     )
+    #   )
+    # }
 
-#' Add an LLM response from llm_review() to the database
+    result <- tbl_insert(scores, conn, "review_score", commit = F)
+  }
+
+  dbFinish(conn, commit = commit)
+  3
+  return(result)
+}
+
+#' Add an AI response from llm_review() to the database
 #'
 #' @param dbInfo Database info
-#' @param llm_review Output of the llm_review() function
+#' @param llmReview Output of the llm_review() function
+#' @param commit (Default = T)
 #'
 #' @import dplyr
 #' @import sqlife
@@ -407,53 +458,62 @@ dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
 #' - review_score_id: the ID for the each detected competency review scores
 #' @export
 #'
-dbAddLLMreview <- function(dbInfo, llm_review) {
-  conn <- dbGetConn(dbInfo)
+dbAIreview <- function(dbInfo, llmReview, commit = T) {
+  conn <- dbGetConn(dbInfo, startTransaction = T)
 
-  # Check if not already in database
-  check <- tbl(conn, "review_score") |>
-    filter(review_assignment_id == llm_review$review_assignment_id) |>
-    pull(review_assignment_id)
+  # Check which ones were a success
+  success <- sapply(llmReview, "[[", "statusCode") == 3
 
-  if (length(check) > 0) {
-    warning(
-      "The llm evaluation with review_assignment_id ",
-      check,
-      "is already in the database"
-    )
+  # Get scores for successful ones
+  scores <- lapply(llmReview[success], function(review) {
+    # Add the evaluation data
+    data <- review$data
+    data$review_assignment_id = review$review_assignment_id
+    data |>
+      rename(
+        competency_id = cID,
+        specificity = spec,
+        utility = util,
+        sentiment = sent,
+        text_matches = text
+      )
+  }) |>
+    do.call(rbind, args = _)
 
-    if (class(dbInfo) == "character") {
-      dbFinish(conn)
-    }
-
-    return(check)
+  # Check if we are updating existing or if this is new data
+  existing <- tbl(conn, "review_score") |>
+    filter(
+      review_assignment_id %in% local(unique(scores$review_assignment_id))
+    ) |>
+    select(id, review_assignment_id, competency_id) |>
+    collect()
+  scores <- scores |>
+    left_join(existing, by = c("review_assignment_id", "competency_id"))
+  # Add new scores
+  if (any(is.na(scores$id))) {
+    dbReviewScore(conn, scores |> filter(is.na(id)) |> select(-id), commit = F)
+  }
+  # Update existing scores
+  if (any(!is.na(scores$id))) {
+    dbReviewScore(conn, scores |> filter(!is.na(id)), commit = F)
   }
 
-  # Add the evaluation data
-  data <- llm_review$data
-  data$review_assignment_id = llm_review$review_assignment_id
-  data <- data |>
-    rename(
-      competency_id = cID,
-      specificity = spec,
-      utility = util,
-      sentiment = sent,
-      text_matches = text
-    )
+  lapply(llmReview, function(x) {})
 
-  review_score_id <- tbl_insert(data, conn, "review_score", commit = T) |>
-    pull(id)
+  updateAssignment <- lapply(llmReview, function(x) within(x, rm(data))) |>
+    do.call(bind_rows, args = _) |>
+    mutate(
+      statusCode = ifelse(statusCode == 3, 2, 3),
+      note = ifelse(tries > 1, paste(tries, "tries"), NA)
+    ) |>
+    select(id = review_assignment_id, statusCode, everything(), -tries)
 
-  # Finsh and return
-  if (class(dbInfo) == "character") {
-    dbFinish(conn)
-  }
+  # Update the review assignment
+  tbl_update(updateAssignment, dbInfo, "review_assignment", commit = F)
 
-  return(data.frame(
-    evaluation_id = llm_review$evaluation_id,
-    review_assignment_id = llm_review$review_assignment_id,
-    review_score_id = review_score_id
-  ))
+  dbFinish(conn, commit = commit)
+
+  return(updateAssignment)
 }
 
 #' Internal function to insert or update into reviewer table
@@ -594,8 +654,9 @@ dbReviewerAI <- function(
   } else if (missing(model)) {
     dbFinish(conn, error = "A new AI reviewer needs model name")
   } else {
+    x <- model
     check <- tbl(conn, "reviewer") |>
-      filter(model == {{ model }}) |>
+      filter(model == x) |>
       pull(id)
     if (length(check) > 0) {
       dbFinish(

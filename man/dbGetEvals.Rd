@@ -18,11 +18,17 @@ dbGetEvals(
 
 \item{dbInfo}{A DB connection or path}
 
-\item{redacted}{(Default = TRUE) Show redacted text}
+\item{redacted}{(Default = TRUE) Show redacted text.
+Can also be a vector of length ids}
 
-\item{includeQuestions}{(Default = TRUE) Add the questions to the text}
+\item{includeQuestions}{(Default = TRUE) Add the questions to the text.
+Can also be a vector of length ids}
 
-\item{html}{(Default = FALSE) Output HTML instead of plain text}
+\item{html}{(Default = FALSE) Output HTML instead of plain text.
+Can also be a vector of length ids}
+
+\item{subtitleTag}{(Default = "h3") In case of HTML = T which tag to use for
+questions (i.e. subtitle)}
 }
 \value{
 A data frame with a text summary for each evaluation

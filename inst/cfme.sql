@@ -86,9 +86,9 @@ CREATE TABLE "review_assignment" (
   "evaluation_id" INTEGER NOT NULL,
   "review_prompt_id" INTEGER NOT NULL,
   "reviewer_id" INTEGER NOT NULL,
+  "statusCode" INTEGER NOT NULL,
   "include_questions" INTEGER,
   "redacted" INTEGER,
-  "statusCode" INTEGER,
   "tokens_in" INTEGER,
   "tokens_out" INTEGER,
   "duration" REAL,
@@ -105,6 +105,6 @@ CREATE TABLE "review_score" (
   "specificity" INTEGER NOT NULL,
   "utility" INTEGER NOT NULL,
   "sentiment" INTEGER NOT NULL,
-  "text_matches" TEXT,
+  "text_matches" TEXT NOT NULL,
   FOREIGN KEY ("review_assignment_id") REFERENCES "review_assignment"("id") ON DELETE CASCADE
 );

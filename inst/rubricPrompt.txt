@@ -51,5 +51,6 @@ For each detected competency collect the following data points:
 - 5: clearly positive
 
 # TO RETURN
-Return the evaluation in a valid CSV format (no backticks or code markup)
+Return the evaluation in a valid CSV format (no backticks or code markup, but quote text when needed)
 Each row is a detected competency with the following columns: cID, text, spec, util, sent
+

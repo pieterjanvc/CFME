@@ -19,6 +19,8 @@ combined_data <- readxl::read_xlsx(
 dbAddEvaluations(combined_data, dbInfo, redactedOnly = T)
 # Add human reviewers
 dbReviewerHuman(dbInfo, username = usernames)
+# Add default AI reviewer
+dbReviewerAI(dbInfo, model = formals(llm_call)$model)
 # Add prompt
 prompt <- readLines("inst/rubricPrompt.txt") |> paste(collapse = "\n")
 review_prompt_id <- dbAddPrompt(prompt, dbInfo)
@@ -30,27 +32,28 @@ evalSample <-
   pull(id)
 dbReviewAssignment(
   dbInfo,
-  reviewer_id = rep(1:3, each = 15),
+  reviewer_id = rep(1:((length(usernames) + 1)), each = 15),
   evaluation_id = evalSample,
   redacted = T,
   include_questions = T
 )
-dbFinish(conn)
+
 
 # Run eval through LLM and insert into DB
 # ***************************************
-test <- llm_review(
+review_assignment_ids <- tbl(conn, "review_assignment") |>
+  filter(reviewer_id == 4) |>
+  pull(id)
+# ONy do two reviews for now
+llmReview <- llm_review(
   dbInfo,
-  review_prompt_id = 1,
-  evaluation_id = 2,
+  review_assignment_id = review_assignment_ids[1:2],
   log = "local/apiLog.csv",
-  include_questions = T,
-  redacted = T,
   maxTries = 3
 )
 
-review_scores_ids <- dbAddLLMreview(dbInfo, test)
-
+dbAIreview(conn, llmReview)
+dbFinish(conn)
 # Open the DB
 shell.exec(normalizePath(dbInfo))
 
@@ -101,10 +104,11 @@ dbReviewAssignment(
 )
 
 
-test <- function(x) {
-  stop("oh no ...", call. = F)
+test <- function(x, y) {
+  ifelse(missing(y), "missing", "set")
+}
+test2 <- function(x, y) {
+  test(x, y = y)
 }
 
-iris |>
-  group_by(Species) |>
-  slice_sample(n = ifelse(Species == "Versicolor", 2, 5))
+test2(5)
