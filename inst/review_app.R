@@ -423,6 +423,7 @@ server <- function(input, output, session) {
     . <- tbl_update(data, conn, "review_assignment")
 
     updateReviewID(input$reviewID)
+    showNotification("Changes saved", type = "message")
   })
 }
 
