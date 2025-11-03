@@ -1,2 +1,5 @@
 ^CFME\.Rproj$
 ^\.Rproj\.user$
+^dev$
+^local$
+^deploy$

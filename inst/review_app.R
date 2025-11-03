@@ -6,6 +6,10 @@ dbInfo <- "../local/test.db"
 # dbInfo <- "../local/dev.db"
 
 ui <- fluidPage(
+  div(
+    mod_dbSetup_ui("dbMod", "link"),
+    style = "position:absolute;right:20px;top=0"
+  ),
   # Layout
   wellPanel(
     fluidRow(
@@ -26,13 +30,13 @@ ui <- fluidPage(
           "0 to start - 0 in progress - 0 competed",
           choices = c()
         ),
-        checkboxInput("includeCompeted", "List completed", value = F),
+        # checkboxInput("includeCompeted", "List completed", value = F),
         checkboxInput("showQuestions", "Show questions", value = T),
       ),
       column(
         4,
         h3("3. Submit once complete"),
-        textAreaInput("generalComment", "Optional review comment"),
+        textAreaInput("reviewComment", "Optional review comment"),
         checkboxInput("flag", "Add issue flag"),
         actionButton("complete", "Mark as complete")
       )
@@ -69,6 +73,14 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
+  # DB Setup module (only needed for download)
+  . <- mod_dbSetup_server(
+    "dbMod",
+    localFolder = "../local",
+    tempFolder = "../local",
+    schema = "../inst/cfme.sql",
+    useDB = dbInfo
+  )
   # DB Connection
   conn <- dbGetConn(dbInfo)
   onStop(function(x) {
@@ -94,12 +106,15 @@ server <- function(input, output, session) {
 
   updateSelectInput(session, "reviewerID", choices = setNames(x$id, x$username))
 
-  # Populate evaluations
-  observeEvent(c(input$reviewerID, input$includeCompeted), {
+  # Populate reviews dropdown
+  updateReviewID <- function(selected) {
     reviews <- tbl(conn, "review_assignment") |>
       filter(reviewer_id == as.integer(input$reviewerID)) |>
-      arrange(statusCode, evaluation_id) |>
       collect() |>
+      arrange(
+        match(statusCode, c(1, 0, -1, 2, setdiff(c(0:2), unique(statusCode)))),
+        evaluation_id
+      ) |>
       mutate(
         descr = sprintf(
           "Evaluation %s - %s",
@@ -119,7 +134,8 @@ server <- function(input, output, session) {
       group_by(statusCode) |>
       summarise(n = n())
 
-    lblInfo <- data.frame(statusCode = 0:2) |>
+    # Calculate each for status
+    lblInfo <- data.frame(statusCode = -1:2) |>
       left_join(lblInfo, by = "statusCode") |>
       mutate(n = ifelse(is.na(n), 0, n)) |>
       pull(n)
@@ -130,15 +146,20 @@ server <- function(input, output, session) {
       "reviewID",
       label = sprintf(
         "%i to start - %i in progress - %i competed",
-        lblInfo[1],
         lblInfo[2],
-        lblInfo[3]
+        lblInfo[3],
+        lblInfo[4] + lblInfo[1]
       ),
       choices = setNames(
         reviews$id,
         reviews$descr
-      )
+      ),
+      selected = ifelse(missing(selected), reviews$id[1], selected)
     )
+  }
+
+  observeEvent(input$reviewerID, {
+    updateReviewID()
   })
 
   # Get the prompt and use it to create the rubric
@@ -155,14 +176,16 @@ server <- function(input, output, session) {
           specificity,
           utility,
           sentiment,
-          text_matches
+          text_matches,
+          note
         ) |>
         collect()
 
       # Check if the eval was already reviewed and use the same prompt version
-      review_prompt_id <- tbl(conn, "review_assignment") |>
+      review_assingment <- tbl(conn, "review_assignment") |>
         filter(id == as.integer(input$reviewID)) |>
-        pull(review_prompt_id)
+        collect()
+      review_prompt_id <- review_assingment$review_prompt_id
 
       # Otherwise use the latest prompt version
       if (length(review_prompt_id) == 0) {
@@ -216,6 +239,26 @@ server <- function(input, output, session) {
         ),
         selected = ifelse(length(scores$sentiment) == 0, 1, scores$sentiment)
       )
+      updateTextAreaInput(
+        input = "competencyComment",
+        value = ifelse(length(scores$note) == 0, "", scores$note)
+      )
+      updateTextAreaInput(
+        input = "reviewComment",
+        value = review_assingment$note
+      )
+      updateCheckboxInput(
+        inputId = "flag",
+        value = review_assingment$statusCode == -1
+      )
+      updateActionButton(
+        inputId = "complete",
+        label = ifelse(
+          review_assingment$statusCode %in% c(-1, 2),
+          "Resubmit",
+          "Mark as complete"
+        )
+      )
 
       # Set the highlighted text list in the module
       txt <- str_split(scores$text_matches, "; ")
@@ -242,15 +285,17 @@ server <- function(input, output, session) {
       updateRadioButtons(inputId = "spec", selected = 1)
       updateRadioButtons(inputId = "util", selected = 1)
       updateRadioButtons(inputId = "sent", selected = 1)
+      updateTextAreaInput(inputId = "competencyComment", value = "")
       updateActionButton(inputId = "add", label = "Add competency review")
       defaultEvidence(c())
       resetSel(Sys.time())
       return()
     }
     prev <- reviewScores() |> filter(competency_id == as.integer(input$cID))
-    updateRadioButtons(inputId = "spec", selected = prev$spec)
-    updateRadioButtons(inputId = "util", selected = prev$util)
-    updateRadioButtons(inputId = "sent", selected = prev$sent)
+    updateRadioButtons(inputId = "spec", selected = prev$specificity)
+    updateRadioButtons(inputId = "util", selected = prev$utility)
+    updateRadioButtons(inputId = "sent", selected = prev$sentiment)
+    updateTextAreaInput(inputId = "competencyComment", value = prev$note)
     updateActionButton(inputId = "add", label = "Update competency review")
     defaultEvidence(str_split(prev$text_matches, "; ")[[1]])
     resetSel(Sys.time())
@@ -276,7 +321,7 @@ server <- function(input, output, session) {
       HTML(
         dbGetEvals(
           ids = evalID,
-          dbInfo = dbInfo,
+          dbInfo = conn,
           redacted = T,
           includeQuestions = input$showQuestions,
           html = T,
@@ -303,13 +348,6 @@ server <- function(input, output, session) {
 
     req(evidence != "")
 
-    #Update the competency reviews data frame
-    if (input$cID %in% reviewScores()$competency_id) {
-      reviewScores(reviewScores()[
-        -c(input$cID %in% reviewScores()$competency_id),
-      ])
-    }
-
     comment <- str_trim(input$competencyComment)
     scores <- data.frame(
       review_assignment_id = as.integer(input$reviewID),
@@ -330,11 +368,17 @@ server <- function(input, output, session) {
     }
 
     #Add / update review
-    scores <- dbReviewScore(dbInfo, scores, reviewStatus = 1)
-
-    reviewScores(rbind(scores, reviewScores()))
+    scores <- dbReviewScore(conn, scores, reviewStatus = 1)
+    x <- c(0, id)
+    reviewScores(bind_rows(scores, reviewScores() |> filter(!id %in% x)))
 
     updateActionButton(inputId = "add", label = "Update competency review")
+    updateReviewID(input$reviewID)
+
+    showNotification(
+      sprintf("Competency %s", ifelse(length(id) == 0, "added", 'updated')),
+      type = "message"
+    )
   })
 
   output$review <- renderDT(
@@ -359,6 +403,27 @@ server <- function(input, output, session) {
     },
     rownames = F
   )
+
+  #When the complete button is clicked
+  observeEvent(input$complete, {
+    if (nrow(reviewScores()) == 0 & !input$flag) {
+      showModal(modalDialog(
+        "You must have reviewed at least one competency or checked the issue",
+        "flag in order to compete a review",
+        title = "Error"
+      ))
+      return()
+    }
+
+    data <- data.frame(
+      id = input$reviewID,
+      statusCode = ifelse(input$flag, -1, 2),
+      note = ifelse(input$reviewComment == "", NA, input$reviewComment)
+    )
+    . <- tbl_update(data, conn, "review_assignment")
+
+    updateReviewID(input$reviewID)
+  })
 }
 
 shinyApp(ui, server)
