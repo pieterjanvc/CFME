@@ -106,5 +106,6 @@ CREATE TABLE "review_score" (
   "utility" INTEGER NOT NULL,
   "sentiment" INTEGER NOT NULL,
   "text_matches" TEXT NOT NULL,
+  "note" TEXT,
   FOREIGN KEY ("review_assignment_id") REFERENCES "review_assignment"("id") ON DELETE CASCADE
 );

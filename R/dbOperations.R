@@ -405,41 +405,27 @@ dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
   return(promptID)
 }
 
-dbReviewScore <- function(dbInfo, scores, commit = T) {
+dbReviewScore <- function(dbInfo, scores, reviewStatus, commit = T) {
   conn <- dbGetConn(dbInfo, startTransaction = T)
   cols <- colnames(scores)
   if ("id" %in% cols) {
     # Update
     result <- tbl_update(scores, conn, "review_score", commit = F)
   } else {
-    ## New
-    # check <- setdiff(
-    #   c(
-    #     "review_assignment_id",
-    #     "competency_id",
-    #     "specificity",
-    #     "utility",
-    #     "sentiment",
-    #     "text_matches"
-    #   ),
-    #   cols
-    # )
-    #
-    # if (length(check) > 0) {
-    #   dbFinish(
-    #     conn,
-    #     error = paste(
-    #       "The following scoring columns are missing:",
-    #       paste(check, collapse = "; ")
-    #     )
-    #   )
-    # }
-
     result <- tbl_insert(scores, conn, "review_score", commit = F)
   }
 
+  # Update the review statusCode if set
+  if (!missing(reviewStatus)) {
+    data <- scores |>
+      select(id = review_assignment_id) |>
+      distinct() |>
+      mutate(statusCode = reviewStatus)
+    . <- tbl_update(data, conn, "review_assignment", commit = F)
+  }
+
   dbFinish(conn, commit = commit)
-  3
+
   return(result)
 }
 

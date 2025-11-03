@@ -32,7 +32,7 @@ ui <- fluidPage(
       column(
         4,
         h3("3. Submit once complete"),
-        textAreaInput("generalComment", "Optional comment"),
+        textAreaInput("generalComment", "Optional review comment"),
         checkboxInput("flag", "Add issue flag"),
         actionButton("complete", "Mark as complete")
       )
@@ -57,8 +57,8 @@ ui <- fluidPage(
         radioButtons("util", "Utility score", choices = c(1:3), inline = T),
         radioButtons("sent", "Sentiment score", choices = c(1:5), inline = T),
         textAreaInput(
-          "comment",
-          "Optional comment",
+          "competencyComment",
+          "Optional competency comment",
           placeholder = "Use this for highlighting rubric issues"
         ),
         actionButton("add", "Add competency review")
@@ -146,11 +146,17 @@ server <- function(input, output, session) {
     input$reviewID,
     {
       reviewID <- as.integer(input$reviewID)
-      print("HI")
       # Get any previous scores
       scores <- tbl(conn, "review_score") |>
         filter(review_assignment_id == reviewID) |>
-        select(competency_id, specificity, utility, sentiment, text_matches) |>
+        select(
+          id,
+          competency_id,
+          specificity,
+          utility,
+          sentiment,
+          text_matches
+        ) |>
         collect()
 
       # Check if the eval was already reviewed and use the same prompt version
@@ -304,12 +310,15 @@ server <- function(input, output, session) {
       ])
     }
 
+    comment <- str_trim(input$competencyComment)
     scores <- data.frame(
+      review_assignment_id = as.integer(input$reviewID),
       competency_id = as.integer(input$cID),
       specificity = as.integer(input$spec),
       utility = as.integer(input$util),
       sentiment = as.integer(input$sent),
-      text_matches = evidence
+      text_matches = evidence,
+      note = ifelse(comment == "", NA, comment)
     )
 
     id <- reviewScores() |>
@@ -320,8 +329,8 @@ server <- function(input, output, session) {
       scores$id = id
     }
 
-    #TODO add / update review
-    scores <- dbReviewScore(dbInfo, scores)
+    #Add / update review
+    scores <- dbReviewScore(dbInfo, scores, reviewStatus = 1)
 
     reviewScores(rbind(scores, reviewScores()))
 
@@ -345,7 +354,7 @@ server <- function(input, output, session) {
           ),
           by = "competency_id"
         ) |>
-        select(-competency_id, -review_score_id) |>
+        select(-competency_id, -id) |>
         select(competency, everything())
     },
     rownames = F

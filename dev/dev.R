@@ -2,6 +2,7 @@
 
 dbInfo <- "local/test.db"
 usernames <- c("PJ", "TK", "AW")
+seed <- 12345
 # dbInfo <- "local/dev.db"
 
 # Start from scratch ----
@@ -25,6 +26,7 @@ dbReviewerAI(dbInfo, model = formals(llm_call)$model)
 prompt <- readLines("inst/rubricPrompt.txt") |> paste(collapse = "\n")
 review_prompt_id <- dbAddPrompt(prompt, dbInfo)
 # Assign the same n random evals to each reviewer
+set.seed(seed)
 evalSample <-
   tbl(conn, "evaluation") |>
   group_by(summary_flg, complete) |>
