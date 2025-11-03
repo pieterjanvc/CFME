@@ -405,6 +405,18 @@ dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
   return(promptID)
 }
 
+#' Insert or update into review score table
+#'
+#' @param dbInfo dbInfo object
+#' @param scores Data frame with scores
+#' @param reviewStatus (Optional) Set the review status
+#' @param commit (Default = T) Commit to DB
+#'
+#' @import sqlife dplyr
+#'
+#' @returns Data frame with changed reviews
+#' @export
+#'
 dbReviewScore <- function(dbInfo, scores, reviewStatus, commit = T) {
   conn <- dbGetConn(dbInfo, startTransaction = T)
   cols <- colnames(scores)
