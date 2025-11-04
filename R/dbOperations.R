@@ -617,6 +617,7 @@ dbReviewerHuman <- function(
 #' @param id (Optional) Reviewer id. If provided this means updating existing.
 #' If not, a new reviewer will be created
 #' @param model AI model name. Required if new reviewer
+#' @param note (Optional) Text note
 #' @param commit (Default = T) Commit the changes to the database
 #'
 #' @import sqlife dplyr

@@ -14,6 +14,8 @@ If not, a new reviewer will be created}
 
 \item{model}{AI model name. Required if new reviewer}
 
+\item{note}{(Optional) Text note}
+
 \item{commit}{(Default = T) Commit the changes to the database}
 }
 \value{
