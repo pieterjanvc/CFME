@@ -1,4 +1,4 @@
-# devtools::install_github("pieterjanvc/sqlife", ref = "notNUllUpdate")
+# devtools::install_github("pieterjanvc/sqlife", ref = "main")
 
 dbInfo <- "local/test.db"
 usernames <- c("PJ", "TK", "AW")
@@ -63,54 +63,40 @@ shell.exec(normalizePath(dbInfo))
 # Generate manual review doc
 # **************************
 
-conn <- dbGetConn(dbInfo)
-
-samples <- c("MEDICINE" = 5, "NEUROLOGY" = 5)
-evaluation_ids <- sapply(
-  1:length(samples),
-  function(i) {
-    tbl(conn, "evaluation") |>
-      filter(summary_flg == 0) |>
-      left_join(
-        tbl(conn, "rotation") |> select(id, clerkship_id),
-        by = c("rotation_id" = "id")
-      ) |>
-      left_join(tbl(conn, "clerkship"), by = c("clerkship_id" = "id")) |>
-      filter(clerkship == local(names(samples[i]))) |>
-      slice_sample(n = samples[i]) |>
-      pull(id)
-  }
-) |>
-  as.integer()
-
-evaluationsToReview <- reviewDoc(
-  "local/evalTest.html",
-  conn,
-  evaluation_ids = evaluation_ids,
+test <- dbGetEvals(
+  ids = 45,
+  dbInfo = conn,
+  redacted = T,
+  includeQuestions = T,
   html = T,
-  includeClerkship = T,
-  includeQuestions = T
-)
-
-evaluation_ids <- c(120, 241, 734, 1209, 1236, 1636, 1693, 1968, 1979, 2022)
-evals <- dbGetEvals(evaluation_ids, dbInfo)
-
-dbDisconnect(conn)
-
-
-dbReviewAssignment(
-  dbInfo,
-  reviewer_id = 1,
-  evaluation_id = 1,
-  review_prompt_id = 1
+  subtitleTag = "b"
 )
 
 
-test <- function(x, y) {
-  ifelse(missing(y), "missing", "set")
-}
-test2 <- function(x, y) {
-  test(x, y = y)
-}
-
-test2(5)
+evals |>
+  mutate(
+    answer = ifelse(
+      includeQuestions,
+      paste0(
+        ifelse(html, sprintf("<%s>", subtitleTag), "---"),
+        question,
+        ifelse(html, sprintf("</%s><br>", subtitleTag), "\n"),
+        answer
+      ),
+      answer
+    )
+  ) |>
+  group_by(evaluation_id) |>
+  summarise(
+    summary = summary_flg[1] == 1,
+    complete = complete[1] == 1,
+    clerkship = clerkship[1],
+    evaluation = paste(
+      answer,
+      sep = "",
+      collapse = ifelse(html, "<br><br>", "\n\n")
+    ),
+    .groups = "drop"
+  ) |>
+  pull(evaluation) |>
+  cat()

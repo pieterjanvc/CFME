@@ -318,31 +318,36 @@ dbGetEvals <- function(
       by = "evaluation_id"
     ) |>
     mutate(
-      answer = ifelse(redacted, answer_txt_redacted, answer_txt),
-      answer = ifelse(
+      # Choose redacted or full
+      text = ifelse(redacted, answer_txt_redacted, answer_txt),
+      # Clean up whitespace
+      text = ifelse(
         html,
-        str_replace_all(str_trim(answer), "\n", "<br>"),
-        str_trim(answer)
+        str_replace_all(str_trim(text), "\n", "<br>"),
+        str_trim(text)
+      ),
+      # Add questions if needed
+      text = ifelse(
+        includeQuestions,
+        paste0(
+          ifelse(html, sprintf("<%s>", subtitleTag), "---"),
+          question,
+          ifelse(html, sprintf("</%s><br>", subtitleTag), "\n"),
+          text
+        ),
+        text
       )
     )
 
   evals <- evals |>
     group_by(evaluation_id) |>
+    arrange(question_id) |>
     summarise(
       summary = summary_flg[1] == 1,
       complete = complete[1] == 1,
       clerkship = clerkship[1],
       evaluation = paste(
-        ifelse(
-          includeQuestions[1],
-          paste(
-            ifelse(html, sprintf("<%s>", subtitleTag), "---"),
-            question,
-            ifelse(html, sprintf("</%s><br>", subtitleTag), "\n")
-          ),
-          ""
-        ),
-        answer,
+        text,
         sep = "",
         collapse = ifelse(html, "<br><br>", "\n\n")
       ),
