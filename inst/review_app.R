@@ -2,7 +2,7 @@ library(shiny)
 library(DT)
 library(stringr)
 
-dbInfo <- "../local/test.db"
+dbInfo <- "../local/preview.db"
 # dbInfo <- "../local/dev.db"
 
 ui <- fluidPage(
@@ -110,6 +110,11 @@ server <- function(input, output, session) {
   updateReviewID <- function(selected) {
     reviews <- tbl(conn, "review_assignment") |>
       filter(reviewer_id == as.integer(input$reviewerID)) |>
+      left_join(
+        tbl(conn, "evaluation") |>
+          select(evaluation_id = id, complete, summary_flg),
+        by = "evaluation_id"
+      ) |>
       collect() |>
       arrange(
         match(statusCode, c(1, 0, -1, 2, setdiff(c(0:2), unique(statusCode)))),
@@ -117,8 +122,10 @@ server <- function(input, output, session) {
       ) |>
       mutate(
         descr = sprintf(
-          "Evaluation %s - %s",
+          "%s (%s %s) - %s",
           evaluation_id,
+          ifelse(complete == 1, "compl", "incompl"),
+          ifelse(summary_flg == 1, "summ", "form"),
           case_when(
             statusCode == 0 ~ "New",
             statusCode == 1 ~ "In progress",
