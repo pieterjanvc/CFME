@@ -1,7 +1,7 @@
 #' Parse data from a combined format and insert it into the database
 #'
 #' @param combined_data Dataframe of the original data
-#' @param dbInfo connection or path to an SQLite database
+#' @param dbPath Path to a (new) CFME database
 #' @param redactedOnly (Default = FALSE) If TRUE, only redacted evlaluations are
 #' put into the database the version with identifiers is omitted
 #'
@@ -13,7 +13,7 @@
 #' @returns TRUE if success
 #' @export
 #'
-dbAddEvaluations <- function(combined_data, dbInfo, redactedOnly = F) {
+dbAddEvaluations <- function(combined_data, dbPath, redactedOnly = F) {
   # Lowercase for all columnnames
   colnames(combined_data) <- str_replace_all(
     tolower(colnames(combined_data)),
@@ -40,8 +40,8 @@ dbAddEvaluations <- function(combined_data, dbInfo, redactedOnly = F) {
     schema <- "inst/cfme.sql"
   }
 
-  result <- dbSetup(dbInfo, schema, validateSchema = T)
-  conn <- dbGetConn(dbInfo)
+  result <- dbSetup(dbPath, schema, validateSchema = T)
+  conn <- dbGetConn(dbPath)
 
   # --- Insert student data
   student <- data |>
@@ -226,10 +226,6 @@ dbAddEvaluations <- function(combined_data, dbInfo, redactedOnly = F) {
 
   # Check number of rows
   if (nrow(check) != nrow(combined_data)) {
-    dbRollback(conn)
-    if (is.character(dbInfo)) {
-      dbFinish(conn)
-    }
     stop(
       "Something went wrong and the processed data ",
       "does not have the same number of rows as the original"
@@ -238,10 +234,6 @@ dbAddEvaluations <- function(combined_data, dbInfo, redactedOnly = F) {
 
   #Check if data matches
   if (!all(check == combined_data, na.rm = T)) {
-    dbRollback(conn)
-    if (is.character(dbInfo)) {
-      dbFinish(conn)
-    }
     stop(
       "Something went wrong and the processed data does not match the original"
     )
@@ -268,7 +260,7 @@ dbAddEvaluations <- function(combined_data, dbInfo, redactedOnly = F) {
 #' Get the evaluation text from the database
 #'
 #' @param ids A vector of evaluation IDs to retrieve text for
-#' @param dbInfo A DB connection or path
+#' @param conn CFME database connection
 #' @param redacted (Default = TRUE) Show redacted text.
 #' Can also be a vector of length ids
 #' @param includeQuestions (Default = TRUE) Add the questions to the text.
@@ -285,13 +277,12 @@ dbAddEvaluations <- function(combined_data, dbInfo, redactedOnly = F) {
 #' @export
 dbGetEvals <- function(
   ids,
-  dbInfo,
+  conn,
   redacted = T,
   includeQuestions = T,
   html = F,
   subtitleTag = "h3"
 ) {
-  conn <- dbGetConn(dbInfo)
   toFilter <- ids
   evals <- tbl(conn, "answer") |>
     inner_join(
@@ -353,19 +344,15 @@ dbGetEvals <- function(
       ),
       .groups = "drop"
     )
-
-  if (is.character(dbInfo)) {
-    dbFinish(conn)
-  }
-
   return(evals)
 }
 
 #' Add a new prompt to the database
 #'
 #' @param prompt Single string of system prompt text
-#' @param dbInfo DB connection info
+#' @param conn CFME database connection
 #' @param note (Optional) Note about this prompt
+#' @param commit (Default = TRUE) Commit the transaction
 #' @param showWarning (Default = TRUE) Show warning if prompt already exists
 #'
 #' @import dplyr
@@ -374,10 +361,9 @@ dbGetEvals <- function(
 #' @returns Prompt ID
 #' @export
 #'
-dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
+dbAddPrompt <- function(prompt, conn, note, commit = T, showWarning = T) {
   # Check if the prompt already exists
   prompt_hash <- hash(prompt)
-  conn <- dbGetConn(dbInfo)
   promptID <- tbl(conn, "review_prompt") |>
     filter(hash == local(prompt_hash)) |>
     pull(id)
@@ -398,13 +384,10 @@ dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
       toInsert$note = note
     }
 
-    promptID <- tbl_insert(toInsert, conn, "review_prompt") |> pull(id)
+    promptID <- tbl_insert(toInsert, conn, "review_prompt", commit = commit) |>
+      pull(id)
   } else if (showWarning) {
     warning("The provided prompt already is in the database")
-  }
-
-  if (is.character(dbInfo)) {
-    dbFinish(conn)
   }
 
   return(promptID)
@@ -412,18 +395,17 @@ dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
 
 #' Insert or update into review score table
 #'
-#' @param dbInfo dbInfo object
+#' @param conn CFME database connection
 #' @param scores Data frame with scores
 #' @param reviewStatus (Optional) Set the review status
-#' @param commit (Default = T) Commit to DB
+#' @param commit (Default = TRUE) Commit the transaction
 #'
 #' @import sqlife dplyr
 #'
 #' @returns Data frame with changed reviews
 #' @export
 #'
-dbReviewScore <- function(dbInfo, scores, reviewStatus, commit = T) {
-  conn <- dbGetConn(dbInfo, startTransaction = T)
+dbReviewScore <- function(conn, scores, reviewStatus, commit = T) {
   cols <- colnames(scores)
   if ("id" %in% cols) {
     # Update
@@ -441,16 +423,18 @@ dbReviewScore <- function(dbInfo, scores, reviewStatus, commit = T) {
     . <- tbl_update(data, conn, "review_assignment", commit = F)
   }
 
-  dbFinish(conn, commit = commit)
+  if (commit) {
+    dbCommit(conn)
+  }
 
   return(result)
 }
 
 #' Add an AI response from llm_review() to the database
 #'
-#' @param dbInfo Database info
+#' @param conn CFME database connection
 #' @param llmReview Output of the llm_review() function
-#' @param commit (Default = T)
+#' @param commit (Default = TRUE) Commit the transaction
 #'
 #' @import dplyr
 #' @import sqlife
@@ -461,9 +445,7 @@ dbReviewScore <- function(dbInfo, scores, reviewStatus, commit = T) {
 #' - review_score_id: the ID for the each detected competency review scores
 #' @export
 #'
-dbAIreview <- function(dbInfo, llmReview, commit = T) {
-  conn <- dbGetConn(dbInfo, startTransaction = T)
-
+dbAIreview <- function(conn, llmReview, commit = T) {
   # Check which ones were a success
   success <- sapply(llmReview, "[[", "statusCode") == 3
 
@@ -512,9 +494,12 @@ dbAIreview <- function(dbInfo, llmReview, commit = T) {
     select(id = review_assignment_id, statusCode, everything(), -tries)
 
   # Update the review assignment
-  tbl_update(updateAssignment, dbInfo, "review_assignment", commit = F)
-
-  dbFinish(conn, commit = commit)
+  updateAssignment <- tbl_update(
+    updateAssignment,
+    conn,
+    "review_assignment",
+    commit = commit
+  )
 
   return(updateAssignment)
 }
@@ -523,23 +508,24 @@ dbAIreview <- function(dbInfo, llmReview, commit = T) {
 #'
 #' @param conn SQLite connection
 #' @param data Data frame with table columns
+#' @param commit (Default = TRUE) Commit the transaction
 #'
 #' @importFrom sqlife tbl_update tbl_insert
 #'
 #' @returns Inserted / Updated data frame
-dbReviewer <- function(conn, data) {
+dbReviewer <- function(conn, data, commit = T) {
   if ("id" %in% colnames(data)) {
     # Update existing
-    return(tbl_update(data, conn, "reviewer", commit = F))
+    return(tbl_update(data, conn, "reviewer", commit = commit))
   } else {
     # Create new
-    return(tbl_insert(data, conn, "reviewer", commit = F))
+    return(tbl_insert(data, conn, "reviewer", commit = commit))
   }
 }
 
 #' Insert or Update human reviewer info into the database
 #'
-#' @param dbInfo dbInfo object
+#' @param conn CFME database connection
 #' @param id (Optional) Reviewer id. If provided this means updating existing.
 #' If not, a new reviewer will be created
 #' @param username Username. Required if new reviewer
@@ -554,7 +540,7 @@ dbReviewer <- function(conn, data) {
 #'
 #' @export
 dbReviewerHuman <- function(
-  dbInfo,
+  conn,
   id,
   username,
   first,
@@ -562,8 +548,6 @@ dbReviewerHuman <- function(
   note,
   commit = T
 ) {
-  conn <- dbGetConn(dbInfo, startTransaction = T)
-
   if (!missing(id)) {
     check <- id
     id <- tbl(conn, "reviewer") |>
@@ -571,29 +555,23 @@ dbReviewerHuman <- function(
       pull(id)
     # Check if exists
     if (length(id) == 0) {
-      dbFinish(
-        conn,
-        error = paste0(
-          "No human reviewer exists with id ",
-          check,
-          ". Omit id to create new reviewer"
-        )
+      stop(
+        "No human reviewer exists with id ",
+        check,
+        ". Omit id to create new reviewer"
       )
     }
   } else if (missing(username)) {
-    dbFinish(conn, error = "A new human reviewer needs at least a username")
+    stop("A new human reviewer needs at least a username")
   } else {
     check <- tbl(conn, "reviewer") |>
       filter(username %in% {{ username }}) |>
       pull(username)
     if (length(check) > 0) {
-      dbFinish(
-        conn,
-        error = sprintf(
-          "Reviewers with username %s already exist",
-          paste(check, collapse = ", ")
-        )
-      )
+      stop(sprintf(
+        "Reviewers with username %s already exist",
+        paste(check, collapse = ", ")
+      ))
     }
   }
 
@@ -609,16 +587,13 @@ dbReviewerHuman <- function(
   # Only keep columns with any new info
   reviewer <- reviewer[, apply(reviewer, 2, function(x) !all(is.na(x)))]
 
-  result <- dbReviewer(conn, reviewer)
-
-  dbFinish(conn, commit = commit)
-
+  result <- dbReviewer(conn, reviewer, commit = commit)
   return(result)
 }
 
 #' Insert or Update AI reviewer info into the database
 #'
-#' @param dbInfo dbInfo object
+#' @param conn CFME database connection
 #' @param id (Optional) Reviewer id. If provided this means updating existing.
 #' If not, a new reviewer will be created
 #' @param model AI model name. Required if new reviewer
@@ -631,14 +606,12 @@ dbReviewerHuman <- function(
 #'
 #' @export
 dbReviewerAI <- function(
-  dbInfo,
+  conn,
   id,
   model,
   note,
   commit = T
 ) {
-  conn <- dbGetConn(dbInfo, startTransaction = T)
-
   if (!missing(id)) {
     check <- id
     id <- tbl(conn, "reviewer") |>
@@ -646,27 +619,21 @@ dbReviewerAI <- function(
       pull(id)
     # Check if exists
     if (length(id) == 0) {
-      dbFinish(
-        conn,
-        error = paste0(
-          "No AI reviewer exists with id ",
-          check,
-          ". Omit id to create new AI reviewer"
-        )
+      stop(
+        "No AI reviewer exists with id ",
+        check,
+        ". Omit id to create new AI reviewer"
       )
     }
   } else if (missing(model)) {
-    dbFinish(conn, error = "A new AI reviewer needs model name")
+    stop("A new AI reviewer needs model name")
   } else {
     x <- model
     check <- tbl(conn, "reviewer") |>
       filter(model == x) |>
       pull(id)
     if (length(check) > 0) {
-      dbFinish(
-        conn,
-        error = sprintf("A reviewer with model name %s already exists", model)
-      )
+      stop(sprintf("A reviewer with model name %s already exists", model))
     }
   }
 
@@ -680,16 +647,14 @@ dbReviewerAI <- function(
   # Only keep columns with any new info
   reviewer <- reviewer[, apply(reviewer, 2, function(x) !all(is.na(x)))]
 
-  result <- dbReviewer(conn, reviewer)
-
-  dbFinish(conn, commit = commit)
+  result <- dbReviewer(conn, reviewer, commit = commit)
 
   return(result)
 }
 
 #' Insert or update a review assignment
 #'
-#' @param dbInfo dbInfo object
+#' @param conn CFME database connection
 #' @param id (Optional) Review assignment ID. If not set, new entry is created
 #' @param reviewer_id (Required if id not set)
 #' @param evaluation_id (Required if id not set)
@@ -707,7 +672,7 @@ dbReviewerAI <- function(
 #' @returns A data frame with inserted / updated database records in review_assignment table
 #' @export
 dbReviewAssignment <- function(
-  dbInfo,
+  conn,
   id,
   reviewer_id,
   evaluation_id,
@@ -722,9 +687,8 @@ dbReviewAssignment <- function(
   timestamp,
   commit = T
 ) {
-  data <- getFunArgs(c("dbInfo", "commit")) |> as.data.frame()
+  data <- getFunArgs(c("conn", "commit")) |> as.data.frame()
 
-  conn <- dbGetConn(dbInfo, startTransaction = T)
   if (missing(id)) {
     # New
     data$statusCode = 0
@@ -738,10 +702,7 @@ dbReviewAssignment <- function(
         sum() ==
         5
       if (redactedOnly & redacted == F) {
-        dbFinish(
-          conn,
-          error = "This database only contains redacted evaluations"
-        )
+        stop("This database only contains redacted evaluations")
       }
     }
 
@@ -751,10 +712,7 @@ dbReviewAssignment <- function(
         filter(id == max(id)) |>
         pull(id)
       if (length(review_prompt_id) == 0) {
-        dbFinish(
-          conn,
-          error = "You need to add at least one prompt before assigning reviews"
-        )
+        stop("You need to add at least one prompt before assigning reviews")
       }
     } else {
       review_prompt_id <- tbl(conn, "review_prompt") |>
@@ -762,22 +720,17 @@ dbReviewAssignment <- function(
         pull(id)
 
       if (length(review_prompt_id) == 0) {
-        dbFinish(
-          conn,
-          error = "The provided review_prompt_id does not exist"
-        )
+        stop("The provided review_prompt_id does not exist")
       }
     }
 
     data$review_prompt_id = review_prompt_id
 
-    result <- tbl_insert(data, conn, "review_assignment", commit = F)
+    result <- tbl_insert(data, conn, "review_assignment", commit = commit)
   } else {
     # Existing
-    result <- tbl_update(data, conn, "review_assignment", commit = F)
+    result <- tbl_update(data, conn, "review_assignment", commit = commit)
   }
-
-  dbFinish(conn, commit = commit)
 
   return(result)
 }

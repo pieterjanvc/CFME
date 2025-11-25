@@ -4,10 +4,10 @@
 \alias{dbReviewerAI}
 \title{Insert or Update AI reviewer info into the database}
 \usage{
-dbReviewerAI(dbInfo, id, model, note, commit = T)
+dbReviewerAI(conn, id, model, note, commit = T)
 }
 \arguments{
-\item{dbInfo}{dbInfo object}
+\item{conn}{CFME database connection}
 
 \item{id}{(Optional) Reviewer id. If provided this means updating existing.
 If not, a new reviewer will be created}

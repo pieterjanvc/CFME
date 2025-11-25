@@ -4,12 +4,12 @@
 \alias{dbAddEvaluations}
 \title{Parse data from a combined format and insert it into the database}
 \usage{
-dbAddEvaluations(combined_data, dbInfo, redactedOnly = F)
+dbAddEvaluations(combined_data, dbPath, redactedOnly = F)
 }
 \arguments{
 \item{combined_data}{Dataframe of the original data}
 
-\item{dbInfo}{connection or path to an SQLite database}
+\item{dbPath}{Path to a (new) CFME database}
 
 \item{redactedOnly}{(Default = FALSE) If TRUE, only redacted evlaluations are
 put into the database the version with identifiers is omitted}

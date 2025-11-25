@@ -4,16 +4,16 @@
 \alias{dbReviewScore}
 \title{Insert or update into review score table}
 \usage{
-dbReviewScore(dbInfo, scores, reviewStatus, commit = T)
+dbReviewScore(conn, scores, reviewStatus, commit = T)
 }
 \arguments{
-\item{dbInfo}{dbInfo object}
+\item{conn}{CFME database connection}
 
 \item{scores}{Data frame with scores}
 
 \item{reviewStatus}{(Optional) Set the review status}
 
-\item{commit}{(Default = T) Commit to DB}
+\item{commit}{(Default = TRUE) Commit the transaction}
 }
 \value{
 Data frame with changed reviews

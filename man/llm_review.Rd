@@ -4,12 +4,12 @@
 \alias{llm_review}
 \title{Get the data from an LLM evaluation}
 \usage{
-llm_review(dbInfo, review_assignment_id, log, maxTries = 3)
+llm_review(dbPath, review_assignment_ids, log, maxTries = 3)
 }
 \arguments{
-\item{dbInfo}{Database info}
+\item{dbPath}{Path to a CFME database}
 
-\item{review_assignment_id}{IDs in review_assignment table}
+\item{review_assignment_ids}{IDs in review_assignment table}
 
 \item{log}{(Optional) Save token usage to extra file (will also be in database)}
 

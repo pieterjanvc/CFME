@@ -4,12 +4,14 @@
 \alias{dbReviewer}
 \title{Internal function to insert or update into reviewer table}
 \usage{
-dbReviewer(conn, data)
+dbReviewer(conn, data, commit = T)
 }
 \arguments{
 \item{conn}{SQLite connection}
 
 \item{data}{Data frame with table columns}
+
+\item{commit}{(Default = TRUE) Commit the transaction}
 }
 \value{
 Inserted / Updated data frame

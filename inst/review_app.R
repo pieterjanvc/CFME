@@ -82,10 +82,7 @@ server <- function(input, output, session) {
     useDB = dbInfo
   )
   # DB Connection
-  conn <- dbGetConn(dbInfo)
-  onStop(function(x) {
-    dbFinish(conn)
-  })
+  conn <- dbGetConn(dbInfo, session = session)
 
   reviewScores <- reactiveVal()
 
@@ -100,7 +97,7 @@ server <- function(input, output, session) {
 
   # Populate reviewers
   x <- tbl(conn, "reviewer") |>
-    filter(human == 1) |>
+    # filter(human == 1) |>
     select(id, username) |>
     collect()
 
@@ -328,7 +325,7 @@ server <- function(input, output, session) {
       HTML(
         dbGetEvals(
           ids = evalID,
-          dbInfo = conn,
+          conn = conn,
           redacted = T,
           includeQuestions = input$showQuestions,
           html = T,
@@ -427,7 +424,7 @@ server <- function(input, output, session) {
       statusCode = ifelse(input$flag, -1, 2),
       note = ifelse(input$reviewComment == "", NA, input$reviewComment)
     )
-    . <- tbl_update(data, conn, "review_assignment")
+    tbl_update(data, conn, "review_assignment", returnData = F)
 
     updateReviewID(input$reviewID)
     showNotification("Changes saved", type = "message")

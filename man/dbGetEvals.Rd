@@ -6,7 +6,7 @@
 \usage{
 dbGetEvals(
   ids,
-  dbInfo,
+  conn,
   redacted = T,
   includeQuestions = T,
   html = F,
@@ -16,7 +16,7 @@ dbGetEvals(
 \arguments{
 \item{ids}{A vector of evaluation IDs to retrieve text for}
 
-\item{dbInfo}{A DB connection or path}
+\item{conn}{CFME database connection}
 
 \item{redacted}{(Default = TRUE) Show redacted text.
 Can also be a vector of length ids}

@@ -4,10 +4,10 @@
 \alias{dbReviewerHuman}
 \title{Insert or Update human reviewer info into the database}
 \usage{
-dbReviewerHuman(dbInfo, id, username, first, last, note, commit = T)
+dbReviewerHuman(conn, id, username, first, last, note, commit = T)
 }
 \arguments{
-\item{dbInfo}{dbInfo object}
+\item{conn}{CFME database connection}
 
 \item{id}{(Optional) Reviewer id. If provided this means updating existing.
 If not, a new reviewer will be created}

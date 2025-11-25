@@ -4,14 +4,14 @@
 \alias{dbAIreview}
 \title{Add an AI response from llm_review() to the database}
 \usage{
-dbAIreview(dbInfo, llmReview, commit = T)
+dbAIreview(conn, llmReview, commit = T)
 }
 \arguments{
-\item{dbInfo}{Database info}
+\item{conn}{CFME database connection}
 
 \item{llmReview}{Output of the llm_review() function}
 
-\item{commit}{(Default = T)}
+\item{commit}{(Default = TRUE) Commit the transaction}
 }
 \value{
 A data frame with the following columns:

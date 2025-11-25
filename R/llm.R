@@ -151,8 +151,8 @@ llm_call <- function(
 
 #' Get the data from an LLM evaluation
 #'
-#' @param dbInfo Database info
-#' @param review_assignment_id IDs in review_assignment table
+#' @param dbPath Path to a CFME database
+#' @param review_assignment_ids IDs in review_assignment table
 #' @param log (Optional) Save token usage to extra file (will also be in database)
 #' @param maxTries (Default = 3) How many times to try in case the response is
 #' not in a valid format
@@ -166,22 +166,22 @@ llm_call <- function(
 #' @export
 #'
 llm_review <- function(
-  dbInfo,
-  review_assignment_id,
+  dbPath,
+  review_assignment_ids,
   log,
   maxTries = 3
 ) {
-  conn <- dbGetConn(dbInfo)
+  conn <- dbGetConn(dbPath)
   # Get assignment info
   assignments <- tbl(conn, "review_assignment") |>
-    filter(id %in% review_assignment_id, statusCode != 2) |>
+    filter(id %in% review_assignment_ids, statusCode != 2) |>
     left_join(
       tbl(conn, "reviewer") |> select(id, model),
       by = c("reviewer_id" = "id")
     ) |>
     collect()
 
-  check <- setdiff(review_assignment_id, assignments$id)
+  check <- setdiff(review_assignment_ids, assignments$id)
 
   if (length(check) > 0) {
     dbFinish(
@@ -204,7 +204,7 @@ llm_review <- function(
     left_join(
       dbGetEvals(
         ids = assignments$evaluation_id,
-        dbInfo = conn,
+        conn = conn,
         redacted = assignments$redacted,
         includeQuestions = assignments$include_questions
       ),
@@ -231,7 +231,7 @@ llm_review <- function(
             round(2)
         },
         error = function(e) {
-          dbFinish(conn, error = e)
+          print(e)
         }
       )
 
@@ -252,7 +252,7 @@ llm_review <- function(
 
     output
   })
-  dbFinish(conn, commit = F)
+  dbFinish(conn)
 
   return(result)
 }

@@ -5,7 +5,7 @@
 \title{Insert or update a review assignment}
 \usage{
 dbReviewAssignment(
-  dbInfo,
+  conn,
   id,
   reviewer_id,
   evaluation_id,
@@ -22,7 +22,7 @@ dbReviewAssignment(
 )
 }
 \arguments{
-\item{dbInfo}{dbInfo object}
+\item{conn}{CFME database connection}
 
 \item{id}{(Optional) Review assignment ID. If not set, new entry is created}
 

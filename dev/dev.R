@@ -1,4 +1,4 @@
-# devtools::install_github("pieterjanvc/sqlife", ref = "main")
+# devtools::install_github("pieterjanvc/sqlife", ref = "expandConnections")
 
 dbInfo <- "local/preview.db"
 usernames <- c("PJ", "TK", "AW")
@@ -39,7 +39,6 @@ set.seed(seed)
   redacted = T,
   include_questions = T
 )
-dbFinish(conn)
 
 # Add manual reviews
 # *******************
@@ -95,10 +94,12 @@ review_assignment_ids <- tbl(conn, "review_assignment") |>
 # ONy do two reviews for now
 llmReview <- llm_review(
   dbInfo,
-  review_assignment_id = review_assignment_ids[1:2],
+  review_assignment_id = review_assignment_ids,
   log = "local/apiLog.csv",
   maxTries = 3
 )
+
+saveRDS(llmReview, "local/llmReviewBackup.rds")
 
 dbAIreview(conn, llmReview)
 
@@ -119,3 +120,23 @@ man <- bind_rows(
   filter(!is.na(cID), !is.na(spec), !is.na(utility), !is.na(sent)) |>
   filter(spec != 0) |>
   select(-eID)
+
+# temp
+. <- dbReviewAssignment(
+  conn,
+  reviewer_id = 4,
+  evaluation_id = 1209,
+  redacted = T,
+  include_questions = T
+)
+
+llmReview <- llm_review(
+  dbInfo,
+  review_assignment_id = 76,
+  log = "local/apiLog.csv",
+  maxTries = 3
+)
+
+saveRDS(llmReview, "local/llmReviewBackup.rds")
+
+dbAIreview(conn, llmReview)
