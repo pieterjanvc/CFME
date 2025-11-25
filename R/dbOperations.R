@@ -1,7 +1,9 @@
 #' Parse data from a combined format and insert it into the database
 #'
 #' @param combined_data Dataframe of the original data
-#' @param dbInfo connection or path to an SQLite database
+#' @param dbPath Path to a (new) CFME database
+#' @param redactedOnly (Default = FALSE) If TRUE, only redacted evlaluations are
+#' put into the database the version with identifiers is omitted
 #'
 #' @import dplyr
 #' @import RSQLite
@@ -11,7 +13,7 @@
 #' @returns TRUE if success
 #' @export
 #'
-dbAddEvaluations <- function(combined_data, dbInfo) {
+dbAddEvaluations <- function(combined_data, dbPath, redactedOnly = F) {
   # Lowercase for all columnnames
   colnames(combined_data) <- str_replace_all(
     tolower(colnames(combined_data)),
@@ -38,8 +40,8 @@ dbAddEvaluations <- function(combined_data, dbInfo) {
     schema <- "inst/cfme.sql"
   }
 
-  result <- dbSetup(dbInfo, schema, validateSchema = T)
-  conn <- dbGetConn(dbInfo)
+  result <- dbSetup(dbPath, schema, validateSchema = T)
+  conn <- dbGetConn(dbPath)
 
   # --- Insert student data
   student <- data |>
@@ -186,7 +188,11 @@ dbAddEvaluations <- function(combined_data, dbInfo) {
       question_id,
       evaluation_id,
       submission_date,
-      answer_txt,
+      if (redactedOnly) {
+        NULL
+      } else {
+        "answer_txt"
+      },
       answer_txt_redacted,
       rowid
     ) |>
@@ -220,10 +226,6 @@ dbAddEvaluations <- function(combined_data, dbInfo) {
 
   # Check number of rows
   if (nrow(check) != nrow(combined_data)) {
-    dbRollback(conn)
-    if (is.character(dbInfo)) {
-      dbFinish(conn)
-    }
     stop(
       "Something went wrong and the processed data ",
       "does not have the same number of rows as the original"
@@ -232,13 +234,13 @@ dbAddEvaluations <- function(combined_data, dbInfo) {
 
   #Check if data matches
   if (!all(check == combined_data, na.rm = T)) {
-    dbRollback(conn)
-    if (is.character(dbInfo)) {
-      dbFinish(conn)
-    }
     stop(
       "Something went wrong and the processed data does not match the original"
     )
+  }
+
+  if (redactedOnly) {
+    check <- check |> select(-answer_txt)
   }
 
   missingVals <- check[!complete.cases(check), ]
@@ -250,9 +252,7 @@ dbAddEvaluations <- function(combined_data, dbInfo) {
     )
   }
 
-  if (is.character(dbInfo)) {
-    dbFinish(conn)
-  }
+  dbFinish(conn)
 
   return(T)
 }
@@ -260,10 +260,15 @@ dbAddEvaluations <- function(combined_data, dbInfo) {
 #' Get the evaluation text from the database
 #'
 #' @param ids A vector of evaluation IDs to retrieve text for
-#' @param dbInfo A DB connection or path
-#' @param redacted (Default = TRUE) Show redacted text
-#' @param includeQuestions (Default = TRUE) Add the questions to the text
-#' @param html (Default = FALSE) Output HTML instead of plain text
+#' @param conn CFME database connection
+#' @param redacted (Default = TRUE) Show redacted text.
+#' Can also be a vector of length ids
+#' @param includeQuestions (Default = TRUE) Add the questions to the text.
+#' Can also be a vector of length ids
+#' @param html (Default = FALSE) Output HTML instead of plain text.
+#' Can also be a vector of length ids
+#' @param subtitleTag (Default = "h3") In case of HTML = T which tag to use for
+#' questions (i.e. subtitle)
 #'
 #' @import dplyr
 #' @importFrom stringr str_trim
@@ -272,66 +277,82 @@ dbAddEvaluations <- function(combined_data, dbInfo) {
 #' @export
 dbGetEvals <- function(
   ids,
-  dbInfo,
+  conn,
   redacted = T,
   includeQuestions = T,
-  html = F
+  html = F,
+  subtitleTag = "h3"
 ) {
-  conn <- dbGetConn(dbInfo)
+  toFilter <- ids
   evals <- tbl(conn, "answer") |>
     inner_join(
       tbl(conn, "evaluation") |>
-        filter(id %in% {{ ids }}) |>
-        select(id, summary_flg, complete),
+        filter(id %in% toFilter) |>
+        select(id, rotation_id, summary_flg, complete),
       by = c("evaluation_id" = "id")
     ) |>
     left_join(tbl(conn, "question"), by = c("question_id" = "id")) |>
+    left_join(
+      tbl(conn, "rotation") |> select(id, clerkship_id),
+      by = c("rotation_id" = "id")
+    ) |>
+    left_join(tbl(conn, "clerkship"), by = c("clerkship_id" = "id")) |>
     collect() |>
+    left_join(
+      data.frame(
+        evaluation_id = ids,
+        redacted = redacted,
+        includeQuestions = includeQuestions,
+        html = html,
+        subtitleTag = subtitleTag
+      ),
+      by = "evaluation_id"
+    ) |>
     mutate(
-      answer = if (redacted) {
-        answer_txt_redacted
-      } else {
-        answer_txt
-      },
-      answer = if (html) {
-        str_replace_all(str_trim(answer), "\n", "<br>")
-      } else {
-        str_trim(answer)
-      }
+      # Choose redacted or full
+      text = ifelse(redacted, answer_txt_redacted, answer_txt),
+      # Clean up whitespace
+      text = ifelse(
+        html,
+        str_replace_all(str_trim(text), "\n", "<br>"),
+        str_trim(text)
+      ),
+      # Add questions if needed
+      text = ifelse(
+        includeQuestions,
+        paste0(
+          ifelse(html, sprintf("<%s>", subtitleTag), "---"),
+          question,
+          ifelse(html, sprintf("</%s><br>", subtitleTag), "\n"),
+          text
+        ),
+        text
+      )
     )
 
   evals <- evals |>
     group_by(evaluation_id) |>
+    arrange(question_id) |>
     summarise(
       summary = summary_flg[1] == 1,
       complete = complete[1] == 1,
+      clerkship = clerkship[1],
       evaluation = paste(
-        if (includeQuestions) {
-          paste(
-            ifelse(html, "<h3>", "---"),
-            question,
-            ifelse(html, "</h3>", "\n")
-          )
-        },
-        answer,
+        text,
         sep = "",
-        collapse = ifelse(html, "<br>", "\n\n")
+        collapse = ifelse(html, "<br><br>", "\n\n")
       ),
       .groups = "drop"
     )
-
-  if (is.character(dbInfo)) {
-    dbFinish(conn)
-  }
-
   return(evals)
 }
 
 #' Add a new prompt to the database
 #'
 #' @param prompt Single string of system prompt text
-#' @param dbInfo DB connection info
+#' @param conn CFME database connection
 #' @param note (Optional) Note about this prompt
+#' @param commit (Default = TRUE) Commit the transaction
 #' @param showWarning (Default = TRUE) Show warning if prompt already exists
 #'
 #' @import dplyr
@@ -340,16 +361,20 @@ dbGetEvals <- function(
 #' @returns Prompt ID
 #' @export
 #'
-dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
+dbAddPrompt <- function(prompt, conn, note, commit = T, showWarning = T) {
   # Check if the prompt already exists
   prompt_hash <- hash(prompt)
-  conn <- dbGetConn(dbInfo)
   promptID <- tbl(conn, "review_prompt") |>
     filter(hash == local(prompt_hash)) |>
     pull(id)
 
   # Add new prompt if needed
   if (length(promptID) == 0) {
+    parsed <- parsePrompt(prompt)
+    if (!parsed$success) {
+      dbFinish(conn, error = parsed$msg)
+    }
+
     toInsert <- data.frame(
       hash = prompt_hash,
       prompt = prompt
@@ -359,78 +384,353 @@ dbAddPrompt <- function(prompt, dbInfo, note, showWarning = T) {
       toInsert$note = note
     }
 
-    promptID <- tbl_insert(toInsert, conn, "review_prompt") |> pull(id)
+    promptID <- tbl_insert(toInsert, conn, "review_prompt", commit = commit) |>
+      pull(id)
   } else if (showWarning) {
     warning("The provided prompt already is in the database")
-  }
-
-  if (is.character(dbInfo)) {
-    dbFinish(conn)
   }
 
   return(promptID)
 }
 
-
-#' Add an LLM response from llm_review() to the database
+#' Insert or update into review score table
 #'
-#' @param dbInfo Database info
-#' @param llm_review Output of the llm_review() function
+#' @param conn CFME database connection
+#' @param scores Data frame with scores
+#' @param reviewStatus (Optional) Set the review status
+#' @param commit (Default = TRUE) Commit the transaction
+#'
+#' @import sqlife dplyr
+#'
+#' @returns Data frame with changed reviews
+#' @export
+#'
+dbReviewScore <- function(conn, scores, reviewStatus, commit = T) {
+  cols <- colnames(scores)
+  if ("id" %in% cols) {
+    # Update
+    result <- tbl_update(scores, conn, "review_score", commit = F)
+  } else {
+    result <- tbl_insert(scores, conn, "review_score", commit = F)
+  }
+
+  # Update the review statusCode if set
+  if (!missing(reviewStatus)) {
+    data <- scores |>
+      select(id = review_assignment_id) |>
+      distinct() |>
+      mutate(statusCode = reviewStatus)
+    . <- tbl_update(data, conn, "review_assignment", commit = F)
+  }
+
+  if (commit) {
+    dbCommit(conn)
+  }
+
+  return(result)
+}
+
+#' Add an AI response from llm_review() to the database
+#'
+#' @param conn CFME database connection
+#' @param llmReview Output of the llm_review() function
+#' @param commit (Default = TRUE) Commit the transaction
 #'
 #' @import dplyr
 #' @import sqlife
 #'
 #' @returns A data frame with the following columns:
 #' - evaluation_id,
-#' - review_response_id,
+#' - review_assignment_id,
 #' - review_score_id: the ID for the each detected competency review scores
 #' @export
 #'
-dbAddLLMresponse <- function(dbInfo, llm_review) {
-  conn <- dbGetConn(dbInfo)
+dbAIreview <- function(conn, llmReview, commit = T) {
+  # Check which ones were a success
+  success <- sapply(llmReview, "[[", "statusCode") == 3
 
-  # Check if not already in database
-  check <- tbl(conn, "review_score") |>
-    filter(review_response_id == llm_review$review_response_id) |>
-    pull(review_response_id)
+  # Get scores for successful ones
+  scores <- lapply(llmReview[success], function(review) {
+    # Add the evaluation data
+    data <- review$data
+    data$review_assignment_id = review$review_assignment_id
+    data |>
+      rename(
+        competency_id = cID,
+        specificity = spec,
+        utility = util,
+        sentiment = sent,
+        text_matches = text
+      )
+  }) |>
+    do.call(rbind, args = _)
 
-  if (length(check) > 0) {
-    warning(
-      "The llm evaluation with review_response_id ",
-      check,
-      "is already in the database"
-    )
+  # Check if we are updating existing or if this is new data
+  existing <- tbl(conn, "review_score") |>
+    filter(
+      review_assignment_id %in% local(unique(scores$review_assignment_id))
+    ) |>
+    select(id, review_assignment_id, competency_id) |>
+    collect()
+  scores <- scores |>
+    left_join(existing, by = c("review_assignment_id", "competency_id"))
+  # Add new scores
+  if (any(is.na(scores$id))) {
+    dbReviewScore(conn, scores |> filter(is.na(id)) |> select(-id), commit = F)
+  }
+  # Update existing scores
+  if (any(!is.na(scores$id))) {
+    dbReviewScore(conn, scores |> filter(!is.na(id)), commit = F)
+  }
 
-    if (class(dbInfo) == "character") {
-      dbFinish(conn)
+  lapply(llmReview, function(x) {})
+
+  updateAssignment <- lapply(llmReview, function(x) within(x, rm(data))) |>
+    do.call(bind_rows, args = _) |>
+    mutate(
+      statusCode = ifelse(statusCode == 3, 2, 3),
+      note = ifelse(tries > 1, paste(tries, "tries"), NA)
+    ) |>
+    select(id = review_assignment_id, statusCode, everything(), -tries)
+
+  # Update the review assignment
+  updateAssignment <- tbl_update(
+    updateAssignment,
+    conn,
+    "review_assignment",
+    commit = commit
+  )
+
+  return(updateAssignment)
+}
+
+#' Internal function to insert or update into reviewer table
+#'
+#' @param conn SQLite connection
+#' @param data Data frame with table columns
+#' @param commit (Default = TRUE) Commit the transaction
+#'
+#' @importFrom sqlife tbl_update tbl_insert
+#'
+#' @returns Inserted / Updated data frame
+dbReviewer <- function(conn, data, commit = T) {
+  if ("id" %in% colnames(data)) {
+    # Update existing
+    return(tbl_update(data, conn, "reviewer", commit = commit))
+  } else {
+    # Create new
+    return(tbl_insert(data, conn, "reviewer", commit = commit))
+  }
+}
+
+#' Insert or Update human reviewer info into the database
+#'
+#' @param conn CFME database connection
+#' @param id (Optional) Reviewer id. If provided this means updating existing.
+#' If not, a new reviewer will be created
+#' @param username Username. Required if new reviewer
+#' @param first (Optional) first name
+#' @param last (Optional) last name
+#' @param note (Optional) note
+#' @param commit (Default = T) Commit the changes to the database
+#'
+#' @import sqlife dplyr
+#'
+#' @returns Data frame with inserted / updated reviewer info
+#'
+#' @export
+dbReviewerHuman <- function(
+  conn,
+  id,
+  username,
+  first,
+  last,
+  note,
+  commit = T
+) {
+  if (!missing(id)) {
+    check <- id
+    id <- tbl(conn, "reviewer") |>
+      filter(id %in% {{ id }}, human == 1) |>
+      pull(id)
+    # Check if exists
+    if (length(id) == 0) {
+      stop(
+        "No human reviewer exists with id ",
+        check,
+        ". Omit id to create new reviewer"
+      )
+    }
+  } else if (missing(username)) {
+    stop("A new human reviewer needs at least a username")
+  } else {
+    check <- tbl(conn, "reviewer") |>
+      filter(username %in% {{ username }}) |>
+      pull(username)
+    if (length(check) > 0) {
+      stop(sprintf(
+        "Reviewers with username %s already exist",
+        paste(check, collapse = ", ")
+      ))
+    }
+  }
+
+  # Create the data frame needed for insertion into reviewer table
+  reviewer <- data.frame(
+    id = missingVal(id),
+    human = T,
+    username = missingVal(username),
+    first_name = missingVal(first),
+    last_name = missingVal(last),
+    note = missingVal(note)
+  )
+  # Only keep columns with any new info
+  reviewer <- reviewer[, apply(reviewer, 2, function(x) !all(is.na(x)))]
+
+  result <- dbReviewer(conn, reviewer, commit = commit)
+  return(result)
+}
+
+#' Insert or Update AI reviewer info into the database
+#'
+#' @param conn CFME database connection
+#' @param id (Optional) Reviewer id. If provided this means updating existing.
+#' If not, a new reviewer will be created
+#' @param model AI model name. Required if new reviewer
+#' @param note (Optional) Text note
+#' @param commit (Default = T) Commit the changes to the database
+#'
+#' @import sqlife dplyr
+#'
+#' @returns Data frame with inserted / updated reviewer info
+#'
+#' @export
+dbReviewerAI <- function(
+  conn,
+  id,
+  model,
+  note,
+  commit = T
+) {
+  if (!missing(id)) {
+    check <- id
+    id <- tbl(conn, "reviewer") |>
+      filter(id %in% {{ id }}, human == 0) |>
+      pull(id)
+    # Check if exists
+    if (length(id) == 0) {
+      stop(
+        "No AI reviewer exists with id ",
+        check,
+        ". Omit id to create new AI reviewer"
+      )
+    }
+  } else if (missing(model)) {
+    stop("A new AI reviewer needs model name")
+  } else {
+    x <- model
+    check <- tbl(conn, "reviewer") |>
+      filter(model == x) |>
+      pull(id)
+    if (length(check) > 0) {
+      stop(sprintf("A reviewer with model name %s already exists", model))
+    }
+  }
+
+  # Create the data frame needed for insertion into reviewer table
+  reviewer <- data.frame(
+    id = missingVal(id),
+    human = F,
+    model = missingVal(model),
+    note = missingVal(note)
+  )
+  # Only keep columns with any new info
+  reviewer <- reviewer[, apply(reviewer, 2, function(x) !all(is.na(x)))]
+
+  result <- dbReviewer(conn, reviewer, commit = commit)
+
+  return(result)
+}
+
+#' Insert or update a review assignment
+#'
+#' @param conn CFME database connection
+#' @param id (Optional) Review assignment ID. If not set, new entry is created
+#' @param reviewer_id (Required if id not set)
+#' @param evaluation_id (Required if id not set)
+#' @param review_prompt_id (Required if id not set)
+#' @param include_questions (Optional value)
+#' @param redacted (Optional value)
+#' @param duration (Optional value)
+#' @param statusCode (Optional value)
+#' @param tokens_in (Optional value)
+#' @param tokens_out (Optional value)
+#' @param note (Optional value)
+#' @param timestamp (Optional value)
+#' @param commit (Default = T)
+#'
+#' @returns A data frame with inserted / updated database records in review_assignment table
+#' @export
+dbReviewAssignment <- function(
+  conn,
+  id,
+  reviewer_id,
+  evaluation_id,
+  review_prompt_id,
+  include_questions,
+  redacted,
+  duration,
+  statusCode,
+  tokens_in,
+  tokens_out,
+  note,
+  timestamp,
+  commit = T
+) {
+  data <- getFunArgs(c("conn", "commit")) |> as.data.frame()
+
+  if (missing(id)) {
+    # New
+    data$statusCode = 0
+    if (missing(redacted)) {
+      data$redacted = T
+    } else {
+      redactedOnly <- tbl(conn, "answer") |>
+        slice_sample(n = 5) |>
+        pull(answer_txt) |>
+        is.na() |>
+        sum() ==
+        5
+      if (redactedOnly & redacted == F) {
+        stop("This database only contains redacted evaluations")
+      }
     }
 
-    return(check)
+    # Check prompt
+    if (missing(review_prompt_id)) {
+      review_prompt_id <- tbl(conn, "review_prompt") |>
+        filter(id == max(id)) |>
+        pull(id)
+      if (length(review_prompt_id) == 0) {
+        stop("You need to add at least one prompt before assigning reviews")
+      }
+    } else {
+      review_prompt_id <- tbl(conn, "review_prompt") |>
+        filter(id == local(review_prompt_id)) |>
+        pull(id)
+
+      if (length(review_prompt_id) == 0) {
+        stop("The provided review_prompt_id does not exist")
+      }
+    }
+
+    data$review_prompt_id = review_prompt_id
+
+    result <- tbl_insert(data, conn, "review_assignment", commit = commit)
+  } else {
+    # Existing
+    result <- tbl_update(data, conn, "review_assignment", commit = commit)
   }
 
-  # Add the evaluation data
-  data <- llm_review$data
-  data$review_response_id = llm_review$review_response_id
-  data <- data |>
-    rename(
-      competency_id = cID,
-      specificity = spec,
-      utility = util,
-      sentiment = sent,
-      text_matches = text
-    )
-
-  review_score_id <- tbl_insert(data, conn, "review_score", commit = T) |>
-    pull(id)
-
-  # Finsh and return
-  if (class(dbInfo) == "character") {
-    dbFinish(conn)
-  }
-
-  return(data.frame(
-    evaluation_id = llm_review$evaluation_id,
-    review_response_id = llm_review$review_response_id,
-    review_score_id = review_score_id
-  ))
+  return(result)
 }

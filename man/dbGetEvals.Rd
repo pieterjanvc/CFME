@@ -4,18 +4,31 @@
 \alias{dbGetEvals}
 \title{Get the evaluation text from the database}
 \usage{
-dbGetEvals(ids, dbInfo, redacted = T, includeQuestions = T, html = F)
+dbGetEvals(
+  ids,
+  conn,
+  redacted = T,
+  includeQuestions = T,
+  html = F,
+  subtitleTag = "h3"
+)
 }
 \arguments{
 \item{ids}{A vector of evaluation IDs to retrieve text for}
 
-\item{dbInfo}{A DB connection or path}
+\item{conn}{CFME database connection}
 
-\item{redacted}{(Default = TRUE) Show redacted text}
+\item{redacted}{(Default = TRUE) Show redacted text.
+Can also be a vector of length ids}
 
-\item{includeQuestions}{(Default = TRUE) Add the questions to the text}
+\item{includeQuestions}{(Default = TRUE) Add the questions to the text.
+Can also be a vector of length ids}
 
-\item{html}{(Default = FALSE) Output HTML instead of plain text}
+\item{html}{(Default = FALSE) Output HTML instead of plain text.
+Can also be a vector of length ids}
+
+\item{subtitleTag}{(Default = "h3") In case of HTML = T which tag to use for
+questions (i.e. subtitle)}
 }
 \value{
 A data frame with a text summary for each evaluation

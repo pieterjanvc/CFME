@@ -4,40 +4,26 @@
 \alias{llm_review}
 \title{Get the data from an LLM evaluation}
 \usage{
-llm_review(
-  dbInfo,
-  review_prompt_id,
-  evaluation_id,
-  model,
-  log,
-  include_questions = T,
-  redacted = T,
-  maxTries = 3
-)
+llm_review(dbPath, review_assignment_ids, log, maxTries = 3)
 }
 \arguments{
-\item{dbInfo}{Database info}
+\item{dbPath}{Path to a CFME database}
 
-\item{review_prompt_id}{System prompt to use for LLM}
-
-\item{evaluation_id}{Evlaution to use}
+\item{review_assignment_ids}{IDs in review_assignment table}
 
 \item{log}{(Optional) Save token usage to extra file (will also be in database)}
-
-\item{include_questions}{(Default = T) Include questions in prompt}
-
-\item{redacted}{(Default = T) Use redacted data}
 
 \item{maxTries}{(Default = 3) How many times to try in case the response is
 not in a valid format}
 }
 \value{
-A list with 4 elements
+A list with results for each review_assignment_id
 \itemize{
 \item statusCode = final status code (3 = success)
-\item review_response_id: ID from review_response table in database
+\item review_assignment_id: ID from review_assignment table in database
 \item data: If successful, data frame with response, otherwise NULL
 \item tries: Number of times tried for valid response
+\item tokens in / out: token used
 }
 }
 \description{

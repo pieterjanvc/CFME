@@ -7,11 +7,12 @@
 reviewDoc(
   path,
   dbInfo,
-  ids,
+  evaluation_ids,
   n,
   completeOnly = F,
   redacted = T,
   includeQuestions = T,
+  includeClerkship = T,
   html = F
 )
 }
@@ -20,7 +21,7 @@ reviewDoc(
 
 \item{dbInfo}{Database info}
 
-\item{ids}{IDs to pull, if empty, n must be provided}
+\item{evaluation_ids}{evaluation_ids to pull, if empty, n must be provided}
 
 \item{n}{Ignored if ids is set, otherwise number of random evaluations to pull}
 
@@ -29,6 +30,8 @@ reviewDoc(
 \item{redacted}{(Default = TRUE) Show redacted text}
 
 \item{includeQuestions}{(Default = TRUE) Add the questions to the text}
+
+\item{includeClerkship}{(Default = TRUE) Add the clerkship name}
 
 \item{html}{(Default = FALSE) Output HTML instead of plain text}
 }
