@@ -1,75 +1,110 @@
+library(bslib)
 library(shiny)
 library(DT)
 library(stringr)
 
+# https://rstudio.github.io/bslib/articles/cards/index.html
+
 dbInfo <- "../local/preview.db"
 # dbInfo <- "../local/dev.db"
 
-ui <- fluidPage(
+ui <- page_fluid(
+  theme = bs_theme(preset = "journal"),
+  tags$style(HTML(
+    "
+    .control-label {
+      font-weight: bold;
+    }
+  "
+  )),
   div(
     mod_dbSetup_ui("dbMod", "link"),
     style = "position:absolute;right:20px;top=0"
   ),
   # Layout
-  wellPanel(
-    fluidRow(
-      column(
-        4,
-        h3("1. Select Reviewer"),
-        selectInput("reviewerID", "Reviewer", choices = c()),
-        HTML(
-          "<i>A <b>reviewer</b> is the person who is assessing the quality of an evaluation here<br>",
-          "An <b>evaluator</b> is the person who wrote the student evaluation below</i>"
-        )
-      ),
-      column(
-        4,
-        h3("2. Pick an evaluation"),
-        selectInput(
-          "reviewID",
-          "0 to start - 0 in progress - 0 competed",
-          choices = c()
-        ),
-        # checkboxInput("includeCompeted", "List completed", value = F),
-        checkboxInput("showQuestions", "Show questions", value = T),
-      ),
-      column(
-        4,
-        h3("3. Submit once complete"),
-        textAreaInput("reviewComment", "Optional review comment"),
-        checkboxInput("flag", "Add issue flag"),
-        actionButton("complete", "Mark as complete")
+  layout_columns(
+    card(
+      card_header("1. Select Reviewer"),
+
+      selectInput("reviewerID", "Reviewer", choices = c()),
+      HTML(
+        "<i>You are the <b>reviewer</b> assessing the quality of an evaluation. ",
+        "The <b>evaluator</b> is the person who wrote the student evaluation below</i>"
       )
     ),
+    card(
+      card_header("2. Pick an evaluation"),
+      selectInput(
+        "reviewID",
+        "0 to start - 0 in progress - 0 competed",
+        choices = c()
+      ),
+      # checkboxInput("includeCompeted", "List completed", value = F),
+      checkboxInput("showQuestions", "Show questions", value = T)
+    )
   ),
-  fluidRow(
-    column(
-      6,
-      wellPanel(
-        h3("Student evaluation"),
-        uiOutput("evaluation")
-      )
+
+  layout_columns(
+    card(
+      card_header("Student evaluation"),
+      uiOutput("evaluation")
     ),
-    column(
-      6,
-      wellPanel(
-        h3("Rubric"),
-        selectInput("cID", "Competency", choices = NULL),
+    navset_card_tab(
+      nav_panel(
+        "1. Competencies",
+        selectInput("cID", "Competency", choices = NULL, width = "100%"),
         uiOutput("compDescr"),
         mod_highlight_ui("highlights", "evaluation", "Text evidence"),
-        radioButtons("spec", "Specificity score", choices = c(1:4), inline = T),
-        radioButtons("util", "Utility score", choices = c(1:3), inline = T),
-        radioButtons("sent", "Sentiment score", choices = c(1:5), inline = T),
+        radioButtons(
+          "spec",
+          "Specificity score",
+          choices = c(1:4),
+          inline = T
+        ),
         textAreaInput(
           "competencyComment",
           "Optional competency comment",
-          placeholder = "Use this for highlighting rubric issues"
+          placeholder = "Not part of the rubric, used internally",
+          width = "100%"
         ),
-        actionButton("add", "Add competency review")
+        actionButton("addComp", "Save competency review"),
+        id = "compTab"
+      ),
+      nav_panel(
+        "2. Overall Scores",
+        radioButtons(
+          "util",
+          "Utility score",
+          choices = c(1:3),
+          inline = F,
+          width = "100%"
+        ),
+        radioButtons(
+          "sent",
+          "Sentiment score",
+          choices = c(1:5),
+          inline = F,
+          width = "100%"
+        ),
+        textAreaInput(
+          "reviewComment",
+          "Optional review comment",
+          placeholder = "Not part of the rubric, used internally",
+          width = "100%"
+        ),
+        actionButton("addOverall", "Add overall review"),
+        id = "overallTab"
+      ),
+      nav_panel(
+        "3. Submit",
+
+        checkboxInput("flag", "Add issue flag"),
+        actionButton("complete", "Mark as complete"),
+        id = "submitTab"
       )
     )
   ),
-  fluidRow(DTOutput("review"))
+  layout_columns(card(DTOutput("review")))
 )
 
 server <- function(input, output, session) {
@@ -121,8 +156,8 @@ server <- function(input, output, session) {
         descr = sprintf(
           "%s (%s %s) - %s",
           evaluation_id,
-          ifelse(complete == 1, "compl", "incompl"),
-          ifelse(summary_flg == 1, "summ", "form"),
+          ifelse(complete == 1, "complete", "incomplete"),
+          ifelse(summary_flg == 1, "summative", "formative"),
           case_when(
             statusCode == 0 ~ "New",
             statusCode == 1 ~ "In progress",
@@ -221,7 +256,7 @@ server <- function(input, output, session) {
         ),
         selected = ifelse(
           length(scores$specificity) == 0,
-          1,
+          character(0),
           scores$specificity
         )
       )
@@ -232,7 +267,11 @@ server <- function(input, output, session) {
           1:length(parsed$content$scoring$util$options),
           parsed$content$scoring$util$options
         ),
-        selected = ifelse(length(scores$utility) == 0, 1, scores$utility)
+        selected = ifelse(
+          length(scores$utility) == 0,
+          character(0),
+          scores$utility
+        )
       )
       updateRadioButtons(
         inputId = "sent",
@@ -241,7 +280,11 @@ server <- function(input, output, session) {
           1:length(parsed$content$scoring$sent$options),
           parsed$content$scoring$sent$options
         ),
-        selected = ifelse(length(scores$sentiment) == 0, 1, scores$sentiment)
+        selected = ifelse(
+          length(scores$sentiment) == 0,
+          character(0),
+          scores$sentiment
+        )
       )
       updateTextAreaInput(
         input = "competencyComment",
@@ -286,11 +329,11 @@ server <- function(input, output, session) {
       is.null(reviewScores()) ||
         !as.integer(input$cID) %in% reviewScores()$competency_id
     ) {
-      updateRadioButtons(inputId = "spec", selected = 1)
-      updateRadioButtons(inputId = "util", selected = 1)
-      updateRadioButtons(inputId = "sent", selected = 1)
+      updateRadioButtons(inputId = "spec", selected = character(0))
+      updateRadioButtons(inputId = "util", selected = character(0))
+      updateRadioButtons(inputId = "sent", selected = character(0))
       updateTextAreaInput(inputId = "competencyComment", value = "")
-      updateActionButton(inputId = "add", label = "Add competency review")
+      updateActionButton(inputId = "add", label = "Save competency review")
       defaultEvidence(c())
       resetSel(Sys.time())
       return()
@@ -307,9 +350,7 @@ server <- function(input, output, session) {
 
   output$compDescr <- renderUI({
     tagList(tags$i(
-      prompt()$parsed$content$competencies[[input$cID]]$description,
-      br(),
-      br()
+      prompt()$parsed$content$competencies[[input$cID]]$description
     ))
   })
 
