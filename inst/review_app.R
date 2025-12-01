@@ -54,7 +54,11 @@ ui <- page_fluid(
         "1. Competencies",
         selectInput("cID", "Competency", choices = NULL, width = "100%"),
         uiOutput("compDescr"),
-        mod_highlight_ui("highlights", "evaluation", "Text evidence"),
+        mod_highlight_ui(
+          "highlights",
+          "evaluation",
+          "Text evidence (required)"
+        ),
         radioButtons(
           "spec",
           "Specificity score",
@@ -207,23 +211,25 @@ server <- function(input, output, session) {
     {
       reviewID <- as.integer(input$reviewID)
       # Get any previous scores
-      scores <- tbl(conn, "review_score") |>
+      review_assingment <- tbl(conn, "review_assignment") |>
+        filter(id == reviewID) |>
+        collect()
+
+      compScores <- tbl(conn, "competency_score") |>
         filter(review_assignment_id == reviewID) |>
         select(
           id,
           competency_id,
           specificity,
-          utility,
-          sentiment,
-          text_matches,
           note
         ) |>
         collect()
 
-      # Check if the eval was already reviewed and use the same prompt version
-      review_assingment <- tbl(conn, "review_assignment") |>
-        filter(id == as.integer(input$reviewID)) |>
+      compText <- tbl(conn, "competency_text") |>
+        filter(competency_score_id %in% local(compScores$id)) |>
         collect()
+
+      # Check if the eval was already reviewed and use the same prompt version
       review_prompt_id <- review_assingment$review_prompt_id
 
       # Otherwise use the latest prompt version
@@ -249,46 +255,47 @@ server <- function(input, output, session) {
       )
       updateRadioButtons(
         inputId = "spec",
-        label = parsed$content$scoring$spec$desciption,
+        label = parsed$content$compScore$spec$desciption,
         choices = setNames(
-          1:length(parsed$content$scoring$spec$options),
-          parsed$content$scoring$spec$options
+          1:length(parsed$content$compScore$spec$options),
+          parsed$content$compScore$spec$options
         ),
         selected = ifelse(
-          length(scores$specificity) == 0,
+          length(compScores$specificity) == 0,
           character(0),
-          scores$specificity
+          compScores$specificity
         )
       )
+
       updateRadioButtons(
         inputId = "util",
-        label = parsed$content$scoring$util$desciption,
+        label = parsed$content$overallScore$util$desciption,
         choices = setNames(
-          1:length(parsed$content$scoring$util$options),
-          parsed$content$scoring$util$options
+          1:length(parsed$content$overallScore$util$options),
+          parsed$content$overallScore$util$options
         ),
         selected = ifelse(
-          length(scores$utility) == 0,
+          length(review_assingment$utility) == 0,
           character(0),
-          scores$utility
+          review_assingment$utility
         )
       )
       updateRadioButtons(
         inputId = "sent",
-        label = parsed$content$scoring$sent$desciption,
+        label = parsed$content$overallScore$sent$desciption,
         choices = setNames(
-          1:length(parsed$content$scoring$sent$options),
-          parsed$content$scoring$sent$options
+          1:length(parsed$content$overallScore$sent$options),
+          parsed$content$overallScore$sent$options
         ),
         selected = ifelse(
-          length(scores$sentiment) == 0,
+          length(review_assingment$sentiment) == 0,
           character(0),
-          scores$sentiment
+          review_assingment$sentiment
         )
       )
       updateTextAreaInput(
         input = "competencyComment",
-        value = ifelse(length(scores$note) == 0, "", scores$note)
+        value = ifelse(length(compScores$note) == 0, "", compScores$note)
       )
       updateTextAreaInput(
         input = "reviewComment",
@@ -308,7 +315,7 @@ server <- function(input, output, session) {
       )
 
       # Set the highlighted text list in the module
-      txt <- str_split(scores$text_matches, "; ")
+      txt <- competency_text$text_match
       if (length(txt) == 0) {
         txt <- list(c())
       }
