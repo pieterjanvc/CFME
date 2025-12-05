@@ -1,62 +1,79 @@
 #' Check if the LLM response is in the expected CSV format
 #'
 #' @param string To parse as CSV
-#' @param expColnames (Optional) Named list of column names / type to expect.
-#'  Defaults:
-#' "cID" = "integer",
-#' "text" = "character"
-#' "spec" = "integer"
-#' "utility" = "integer"
-#' "sent" = "integer"
+#' @param reviewID (Optional) Review assingment ID to add to the output
 #'
 #' @importFrom stringr str_replace_all
+#' @importFrom jsonlite fromJSON
 #'
 #' @returns List with two elements
 #'  - statusCode: 0 not valid CSV, 1 column names / number issue,
 #'     2 column type error, 3 expected CSV format
-#'  - data: Data frame with results for statusCode 3, NULL otherwise
+#'  - data: List of 3 data frames with results for statusCode 3, NULL otherwise
 #' @export
 #'
-llm_csv_response <- function(string, expColnames) {
-  # Remove spaces at end of line
-  string <- str_replace_all(string, "\\s*\n", "\n")
-
-  if (missing(expColnames)) {
-    expColnames <- c(
-      "cID" = "integer",
-      "text" = "character",
-      "spec" = "integer",
-      "util" = "integer",
-      "sent" = "integer"
-    )
-  }
-
+llm_csv_response <- function(string, reviewID) {
   suppressWarnings({
     tryCatch(
       {
-        # Try and load as CSV
-        check <- read.csv(textConnection(string), fill = F)
+        # Try and load as list
+        check <- fromJSON(string, simplifyVector = T, simplifyDataFrame = F)
 
-        # Check number of columns and names
-        if (length(setdiff(names(expColnames), colnames(check))) > 0) {
+        # Check the names
+        if (!all(names(check) %in% c("compScores", "util", "sent"))) {
           return(list(statusCode = 1, data = NULL))
         }
 
-        # Check column type
-        anyNumeric <- check[, sapply(check, class) == "numeric"]
-        if (length(anyNumeric) > 0 && all(anyNumeric %% 1 == 0)) {
-          check[, sapply(check, class) == "numeric"] = as.integer(check[,
-            sapply(check, class) == "numeric"
-          ])
-        } else if (length(anyNumeric) > 0) {
+        if (!all(names(check$compScores) %in% c("cID", "spec", "text"))) {
+          return(list(statusCode = 1, data = NULL))
+        }
+
+        # Check integer values
+        allInts <- all(
+          unlist(c(
+            sapply(check$compScores, "[[", "cID"),
+            sapply(check$compScores, "[[", "spec"),
+            check[c("util", "sent")]
+          )) %%
+            1 ==
+            0
+        )
+        if (!allInts) {
           return(list(statusCode = 2, data = NULL))
         }
 
-        if (!all(sapply(check, class) == expColnames)) {
-          return(list(statusCode = 2, data = NULL))
+        # Get global eval
+        globalEval <- data.frame(util = check$util, sent = check$sent)
+
+        # Get comp scores
+        compScores <- data.frame(
+          cID = sapply(check$compScores, "[[", "cID"),
+          spec = sapply(check$compScores, "[[", "spec")
+        )
+
+        # Get comp text
+        compText <- do.call(
+          rbind,
+          lapply(check$compScores, function(x) {
+            data.frame(cID = x$cID, text_match = x$text)
+          })
+        )
+
+        # Add review_assignment_id if provided
+        if (!missing(reviewID)) {
+          globalEval <- globalEval |> mutate(id = reviewID, .before = util)
+          compScores <- compScores |> mutate(id = reviewID, .before = cID)
+          compText <- compText |> mutate(id = reviewID, .before = cID)
         }
 
-        return(list(statusCode = 3, data = check))
+        return(list(
+          statusCode = 3,
+          data = list(
+            overallScores = globalEval,
+            compScores = compScores,
+            compText = compText
+          )
+        ))
       },
       error = function(e) {
         return(list(statusCode = 0, data = NULL))
@@ -236,7 +253,10 @@ llm_review <- function(
       )
 
       # Convert output CSV string to data frame (and check)
-      output <- llm_csv_response(result$choices[[1]]$message$content)
+      output <- llm_csv_response(
+        result$choices[[1]]$message$content,
+        reviewID = evals$id[j]
+      )
 
       # Add the response metadata
       output$review_assignment_id = evals$id[j]
