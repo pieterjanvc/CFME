@@ -2,10 +2,11 @@ library(bslib)
 library(shiny)
 library(DT)
 library(stringr)
+library(knitr)
 
 # https://rstudio.github.io/bslib/articles/cards/index.html
 
-dbInfo <- "../local/preview.db"
+dbInfo <- "../local/test.db"
 # dbInfo <- "../local/dev.db"
 
 ui <- page_fluid(
@@ -101,14 +102,14 @@ ui <- page_fluid(
       ),
       nav_panel(
         "3. Submit",
-
+        uiOutput("summary"),
         checkboxInput("flag", "Add issue flag"),
         actionButton("complete", "Mark as complete"),
         id = "submitTab"
       )
     )
-  ),
-  layout_columns(card(DTOutput("review")))
+  )
+  # layout_columns(card(DTOutput("review")))
 )
 
 server <- function(input, output, session) {
@@ -217,12 +218,6 @@ server <- function(input, output, session) {
 
       compScores <- tbl(conn, "competency_score") |>
         filter(review_assignment_id == reviewID) |>
-        select(
-          id,
-          competency_id,
-          specificity,
-          note
-        ) |>
         collect()
 
       compText <- tbl(conn, "competency_text") |>
@@ -315,15 +310,16 @@ server <- function(input, output, session) {
       )
 
       # Set the highlighted text list in the module
-      txt <- competency_text$text_match
-      if (length(txt) == 0) {
-        txt <- list(c())
-      }
-      defaultEvidence(txt[[1]])
+
+      defaultEvidence(compText$text_match)
       resetSel(Sys.time())
 
       # Update the competency review var
-      reviewScores(scores)
+      reviewScores(list(
+        overallScores = review_assingment,
+        compScores = compScores,
+        compText = compText
+      ))
 
       list(text = text, parsed = parsed)
     },
@@ -340,7 +336,7 @@ server <- function(input, output, session) {
       updateRadioButtons(inputId = "util", selected = character(0))
       updateRadioButtons(inputId = "sent", selected = character(0))
       updateTextAreaInput(inputId = "competencyComment", value = "")
-      updateActionButton(inputId = "add", label = "Save competency review")
+      updateActionButton(inputId = "addComp", label = "Save competency review")
       defaultEvidence(c())
       resetSel(Sys.time())
       return()
@@ -350,7 +346,7 @@ server <- function(input, output, session) {
     updateRadioButtons(inputId = "util", selected = prev$utility)
     updateRadioButtons(inputId = "sent", selected = prev$sentiment)
     updateTextAreaInput(inputId = "competencyComment", value = prev$note)
-    updateActionButton(inputId = "add", label = "Update competency review")
+    updateActionButton(inputId = "addComp", label = "Update competency review")
     defaultEvidence(str_split(prev$text_matches, "; ")[[1]])
     resetSel(Sys.time())
   })
@@ -386,9 +382,9 @@ server <- function(input, output, session) {
   })
 
   # Add or update a competency review
-  observeEvent(input$add, {
-    evidence <- str_trim(txtEvidence()$text) |> paste(collapse = "; ")
-    if (evidence == "") {
+  observeEvent(input$addComp, {
+    evidence <- str_trim(txtEvidence()$text)
+    if (length(evidence) == 0) {
       showModal(modalDialog(
         HTML(
           "Please make sure to provide miminal text evidence by higlighting",
@@ -398,67 +394,140 @@ server <- function(input, output, session) {
       ))
     }
 
-    req(evidence != "")
+    req(length(evidence) > 0)
+
+    if (is.null(input$spec)) {
+      showModal(modalDialog(
+        HTML("Please make sure to select a specificity score"),
+        title = "Text evidence missing"
+      ))
+    }
+
+    req(input$spec)
 
     comment <- str_trim(input$competencyComment)
-    scores <- data.frame(
+    compScores <- data.frame(
       review_assignment_id = as.integer(input$reviewID),
       competency_id = as.integer(input$cID),
       specificity = as.integer(input$spec),
-      utility = as.integer(input$util),
-      sentiment = as.integer(input$sent),
-      text_matches = evidence,
       note = ifelse(comment == "", NA, comment)
     )
 
-    id <- reviewScores() |>
-      filter(competency_id == as.integer(input$cID)) |>
-      pull(id)
+    compText <- data.frame(
+      review_assignment_id = as.integer(input$reviewID),
+      competency_id = as.integer(input$cID),
+      text_match = evidence
+    )
 
-    if (length(id) > 0) {
-      scores$id = id
-    }
+    scores <- dbReviewUpdate(
+      conn = conn,
+      statusCode = 1,
+      compScores = compScores,
+      compText = compText,
+      removeNotListed = F,
+      commit = T
+    )
 
-    #Add / update review
-    scores <- dbReviewScore(conn, scores, reviewStatus = 1)
-    x <- c(0, id)
-    reviewScores(bind_rows(scores, reviewScores() |> filter(!id %in% x)))
+    # id <- reviewScores() |>
+    #   filter(competency_id == as.integer(input$cID)) |>
+    #   pull(id)
+    #
+    # if (length(id) > 0) {
+    #   scores$id = id
+    # }
+    #
+    # #Add / update review
+    #
+    # x <- c(0, id)
 
-    updateActionButton(inputId = "add", label = "Update competency review")
+    # reviewScores(bind_rows(scores, reviewScores() |> filter(!id %in% x)))
+    reviewScores(scores)
+
+    updateActionButton(inputId = "addComp", label = "Update competency review")
     updateReviewID(input$reviewID)
 
-    showNotification(
-      sprintf("Competency %s", ifelse(length(id) == 0, "added", 'updated')),
-      type = "message"
+    showNotification(sprintf("Competency updated"), type = "message")
+  })
+
+  # Add or update the overall scores
+  observeEvent(input$addOverall, {
+    # Check
+    if (is.null(input$util) || is.null(input$sent)) {
+      showModal(modalDialog(
+        HTML("Please make sure to select a Utility adn Sentiment score"),
+        title = "Score missing"
+      ))
+    }
+
+    req(!is.null(input$util) && !is.null(input$sent))
+
+    overallScores <- data.frame(
+      id = as.integer(input$reviewID),
+      utility = as.integer(input$util),
+      sentiment = as.integer(input$sent),
+      note = str_trim(input$reviewComment)
+    )
+
+    scores <- dbReviewUpdate(
+      conn = conn,
+      statusCode = 1,
+      overallScores = overallScores,
+      removeNotListed = F,
+      commit = T
+    )
+
+    reviewScores(scores)
+
+    updateActionButton(inputId = "addOverall", label = "Update overall review")
+    updateReviewID(input$reviewID)
+
+    showNotification(sprintf("Scores updated"), type = "message")
+  })
+
+  output$summary <- renderUI({
+    req(reviewScores())
+    compScores <- reviewScores()$compScores |>
+      select(specificity, competency_id)
+    overallScores <- reviewScores()$overallScores
+    tagList(
+      tags$h3("Review Summary"),
+      tags$label("Competencies"),
+      HTML(kable(compScores, format = "html")),
+      tags$label(sprintf("Utility Score: %i", overallScores$utility)),
+      tags$label(sprintf("Sentiment Score: %i", overallScores$sentiment))
     )
   })
 
-  output$review <- renderDT(
-    {
-      req(reviewScores())
-      # Replace ID with the competency description
-      reviewScores() |>
-        left_join(
-          data.frame(
-            competency_id = 1:6,
-            competency = sapply(
-              prompt()$parsed$content$competencies,
-              "[[",
-              "name"
-            ) |>
-              str_trunc(20)
-          ),
-          by = "competency_id"
-        ) |>
-        select(-competency_id, -id) |>
-        select(competency, everything())
-    },
-    rownames = F
-  )
+  # output$review <- renderDT(
+  #   {
+  #     req(reviewScores())
+  #     # Replace ID with the competency description
+  #     reviewScores() |>
+  #       left_join(
+  #         data.frame(
+  #           competency_id = 1:6,
+  #           competency = sapply(
+  #             prompt()$parsed$content$competencies,
+  #             "[[",
+  #             "name"
+  #           ) |>
+  #             str_trunc(20)
+  #         ),
+  #         by = "competency_id"
+  #       ) |>
+  #       select(-competency_id, -id) |>
+  #       select(competency, everything())
+  #   },
+  #   rownames = F
+  # )
 
   #When the complete button is clicked
   observeEvent(input$complete, {
-    if (nrow(reviewScores()) == 0 & !input$flag) {
+    if (
+      (nrow(reviewScores()$compScores) == 0 ||
+        nrow(reviewScores()$overallScores) == 0) &
+        !input$flag
+    ) {
       showModal(modalDialog(
         "You must have reviewed at least one competency or checked the issue",
         "flag in order to compete a review",
@@ -469,13 +538,12 @@ server <- function(input, output, session) {
 
     data <- data.frame(
       id = input$reviewID,
-      statusCode = ifelse(input$flag, -1, 2),
-      note = ifelse(input$reviewComment == "", NA, input$reviewComment)
+      statusCode = ifelse(input$flag, -1, 2)
     )
     tbl_update(data, conn, "review_assignment", returnData = F)
 
     updateReviewID(input$reviewID)
-    showNotification("Changes saved", type = "message")
+    showNotification("Changes marked as complete", type = "message")
   })
 }
 

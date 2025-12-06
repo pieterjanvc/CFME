@@ -82,7 +82,8 @@ CREATE TABLE "review_prompt" (
 
 CREATE TABLE "review_assignment" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+  "created" TEXT DEFAULT (datetime('now', 'localtime')),
+  "modified" TEXT DEFAULT (datetime('now', 'localtime')),
   "evaluation_id" INTEGER NOT NULL,
   "review_prompt_id" INTEGER NOT NULL,
   "reviewer_id" INTEGER NOT NULL,

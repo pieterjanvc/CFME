@@ -91,10 +91,10 @@ review_assignment_ids <- tbl(conn, "review_assignment") |>
   filter(reviewer_id == 4) |>
   pull(id)
 
-# Only do two reviews for now - UPDATE from CSV to JSON
+# Only do two reviews for now
 llmReview <- llm_review(
   dbInfo,
-  review_assignment_id = review_assignment_ids,
+  review_assignment_id = review_assignment_ids[1],
   log = "local/apiLog.csv",
   maxTries = 3
 )
