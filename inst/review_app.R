@@ -38,7 +38,8 @@ ui <- page_fluid(
       selectInput(
         "reviewID",
         "0 to start - 0 in progress - 0 competed",
-        choices = c()
+        choices = c(),
+        width = "100%"
       ),
       # checkboxInput("includeCompeted", "List completed", value = F),
       checkboxInput("showQuestions", "Show questions", value = T)
@@ -109,7 +110,6 @@ ui <- page_fluid(
       )
     )
   )
-  # layout_columns(card(DTOutput("review")))
 )
 
 server <- function(input, output, session) {
@@ -143,7 +143,7 @@ server <- function(input, output, session) {
 
   updateSelectInput(session, "reviewerID", choices = setNames(x$id, x$username))
 
-  # Populate reviews dropdown
+  # Populate review selection dropdown
   updateReviewID <- function(selected) {
     reviews <- tbl(conn, "review_assignment") |>
       filter(reviewer_id == as.integer(input$reviewerID)) |>
@@ -211,6 +211,7 @@ server <- function(input, output, session) {
     input$reviewID,
     {
       reviewID <- as.integer(input$reviewID)
+
       # Get any previous scores
       review_assingment <- tbl(conn, "review_assignment") |>
         filter(id == reviewID) |>
@@ -240,7 +241,9 @@ server <- function(input, output, session) {
         pull(prompt)
       parsed <- parsePrompt(text)
 
-      # Update all inputs based on rubric phrasing
+      # Update inputs based on rubric phrasing
+
+      # Competency list
       updateSelectInput(
         inputId = "cID",
         choices = setNames(
@@ -248,6 +251,9 @@ server <- function(input, output, session) {
           sapply(parsed$content$competencies, "[[", "name")
         )
       )
+
+      # Specificity score
+      #  The value is adjusted in the input$cID function
       updateRadioButtons(
         inputId = "spec",
         label = parsed$content$compScore$spec$desciption,
@@ -255,13 +261,10 @@ server <- function(input, output, session) {
           1:length(parsed$content$compScore$spec$options),
           parsed$content$compScore$spec$options
         ),
-        selected = ifelse(
-          length(compScores$specificity) == 0,
-          character(0),
-          compScores$specificity
-        )
+        selected = NULL
       )
 
+      # Overall scores
       updateRadioButtons(
         inputId = "util",
         label = parsed$content$overallScore$util$desciption,
@@ -269,11 +272,11 @@ server <- function(input, output, session) {
           1:length(parsed$content$overallScore$util$options),
           parsed$content$overallScore$util$options
         ),
-        selected = ifelse(
-          length(review_assingment$utility) == 0,
-          character(0),
+        selected = if (length(review_assingment$utility) == 0) {
+          character(0)
+        } else {
           review_assingment$utility
-        )
+        }
       )
       updateRadioButtons(
         inputId = "sent",
@@ -282,24 +285,24 @@ server <- function(input, output, session) {
           1:length(parsed$content$overallScore$sent$options),
           parsed$content$overallScore$sent$options
         ),
-        selected = ifelse(
-          length(review_assingment$sentiment) == 0,
-          character(0),
+        selected = if (length(review_assingment$sentiment) == 0) {
+          character(0)
+        } else {
           review_assingment$sentiment
-        )
+        }
       )
-      updateTextAreaInput(
-        input = "competencyComment",
-        value = ifelse(length(compScores$note) == 0, "", compScores$note)
-      )
+
       updateTextAreaInput(
         input = "reviewComment",
         value = review_assingment$note
       )
+
+      # Submission tab
       updateCheckboxInput(
         inputId = "flag",
         value = review_assingment$statusCode == -1
       )
+
       updateActionButton(
         inputId = "complete",
         label = ifelse(
@@ -308,11 +311,6 @@ server <- function(input, output, session) {
           "Mark as complete"
         )
       )
-
-      # Set the highlighted text list in the module
-
-      defaultEvidence(compText$text_match)
-      resetSel(Sys.time())
 
       # Update the competency review var
       reviewScores(list(
@@ -326,31 +324,45 @@ server <- function(input, output, session) {
     ignoreInit = T
   )
 
-  # Reset rubric on competency change
+  # Update the rubric on competency change
   observeEvent(input$cID, {
-    if (
-      is.null(reviewScores()) ||
-        !as.integer(input$cID) %in% reviewScores()$competency_id
-    ) {
-      updateRadioButtons(inputId = "spec", selected = character(0))
-      updateRadioButtons(inputId = "util", selected = character(0))
-      updateRadioButtons(inputId = "sent", selected = character(0))
-      updateTextAreaInput(inputId = "competencyComment", value = "")
-      updateActionButton(inputId = "addComp", label = "Save competency review")
-      defaultEvidence(c())
-      resetSel(Sys.time())
-      return()
-    }
-    prev <- reviewScores() |> filter(competency_id == as.integer(input$cID))
-    updateRadioButtons(inputId = "spec", selected = prev$specificity)
-    updateRadioButtons(inputId = "util", selected = prev$utility)
-    updateRadioButtons(inputId = "sent", selected = prev$sentiment)
-    updateTextAreaInput(inputId = "competencyComment", value = prev$note)
-    updateActionButton(inputId = "addComp", label = "Update competency review")
-    defaultEvidence(str_split(prev$text_matches, "; ")[[1]])
+    req(reviewScores())
+    # Get the previous values (if any)
+    compScores <- reviewScores()$compScores |>
+      filter(competency_id == as.integer(input$cID))
+
+    compText <- reviewScores()$compText |>
+      filter(competency_score_id %in% compScores$id)
+
+    # Update all competency scoring values
+    defaultEvidence(compText$text_match)
     resetSel(Sys.time())
+
+    updateRadioButtons(
+      inputId = "spec",
+      selected = if (nrow(compScores) == 0) {
+        character(0)
+      } else {
+        compScores$specificity
+      }
+    )
+
+    updateTextAreaInput(
+      input = "competencyComment",
+      value = ifelse(nrow(compScores) == 0, "", compScores$note)
+    )
+
+    updateActionButton(
+      inputId = "addComp",
+      label = ifelse(
+        nrow(compScores) == 0,
+        "Add competency review",
+        "Update competency review"
+      )
+    )
   })
 
+  # This is the definition underneath the selected competency
   output$compDescr <- renderUI({
     tagList(tags$i(
       prompt()$parsed$content$competencies[[input$cID]]$description
@@ -428,19 +440,7 @@ server <- function(input, output, session) {
       commit = T
     )
 
-    # id <- reviewScores() |>
-    #   filter(competency_id == as.integer(input$cID)) |>
-    #   pull(id)
-    #
-    # if (length(id) > 0) {
-    #   scores$id = id
-    # }
-    #
-    # #Add / update review
-    #
-    # x <- c(0, id)
-
-    # reviewScores(bind_rows(scores, reviewScores() |> filter(!id %in% x)))
+    # Update the reviewScores var (used in submission tab)
     reviewScores(scores)
 
     updateActionButton(inputId = "addComp", label = "Update competency review")
@@ -483,7 +483,7 @@ server <- function(input, output, session) {
 
     showNotification(sprintf("Scores updated"), type = "message")
   })
-
+  # TODO ISSUE WITH UPDATE FROM PREVIOUS SAVES IN UI
   output$summary <- renderUI({
     req(reviewScores())
     compScores <- reviewScores()$compScores |>
