@@ -2,7 +2,11 @@
 
 dbInfo <- "local/test.db"
 usernames <- c("PJ", "TK", "AW")
-seed <- 12345
+seed <- 54321
+
+# Prev seeds
+# seed <- 12345
+
 # dbInfo <- "local/dev.db"
 
 # Start from scratch ----
@@ -30,11 +34,11 @@ set.seed(seed)
 . <- evalSample <-
   tbl(conn, "evaluation") |>
   group_by(summary_flg, complete) |>
-  slice_sample(n = 5) |>
+  slice_sample(n = 2) |>
   pull(id)
 . <- dbReviewAssignment(
   conn,
-  reviewer_id = rep(1:((length(usernames) + 1)), each = 15),
+  reviewer_id = rep(1:((length(usernames) + 1)), each = 6),
   evaluation_id = evalSample,
   redacted = T,
   include_questions = T

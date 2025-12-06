@@ -47,12 +47,12 @@ These scores are for the evaluation as a whole
 - 2: moderately useful: Specific to the student but hard to act upon
 - 3: highly useful: Very specific and directly applicable to professional improvement
 
-### sent: Sentiment score of the competency comments
-- 1: clearly negative / red flag
-- 2: slightly negative
-- 3: neutral
-- 4: slightly positive
-- 5: clearly positive
+### sent: Evaluator sentiment score for the overall review
+- 1: clearly negative or red flags
+- 2: slightly negative or coded language indicating potential critisism
+- 3: neutral or not enough information to indicate sentiment
+- 4: generic positive language (e.g. aspecific superlatives)
+- 5: specific positive language indicating the reviewer's effort to make the student stand out
 
 # TO RETURN
 A valid JSON string without any other code markup using the template below.

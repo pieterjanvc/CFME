@@ -7,6 +7,21 @@ library(stringr)
 
 dbInfo <- "../local/test.db"
 
+tabStatusIcon <- function(name, status, session) {
+  removeUI(sprintf("#%sIcon", name), session = session)
+  insertUI(
+    sprintf("#%sTitle", name),
+    "afterBegin",
+    ui = icon(
+      ifelse(status == 1, "circle-half-stroke", "circle"),
+      class = ifelse(status == 0, "fa-regular", "fa-solid"),
+      style = "color: #3ebc00;",
+      id = paste0(name, "Icon")
+    ),
+    session = session
+  )
+}
+
 ui <- page_fluid(
   theme = bs_theme(preset = "journal"),
   tags$style(HTML(
@@ -20,9 +35,10 @@ ui <- page_fluid(
   }
   "
   )),
+  # Add the DB download link
   div(
     mod_dbSetup_ui("dbMod", "link"),
-    style = "position:absolute;right:20px;top=0"
+    style = "position:absolute;right:20px;top=0;z-index:9999;"
   ),
   # Layout
   layout_columns(
@@ -55,7 +71,7 @@ ui <- page_fluid(
     ),
     navset_card_tab(
       nav_panel(
-        "1. Competencies",
+        title = div(" Competencies", id = "compTitle"),
         selectInput("cID", "Competency", choices = NULL, width = "100%"),
         uiOutput("compDescr"),
         mod_highlight_ui(
@@ -76,10 +92,10 @@ ui <- page_fluid(
           width = "100%"
         ),
         actionButton("addComp", "Save competency review"),
-        id = "compTab"
+        value = "compTab"
       ),
       nav_panel(
-        "2. Overall Scores",
+        title = div(" Overall Scores", id = "overallTitle"),
         radioButtons(
           "util",
           "Utility score",
@@ -104,13 +120,14 @@ ui <- page_fluid(
         id = "overallTab"
       ),
       nav_panel(
-        "3. Submit",
+        title = div(" Submit", id = "submitTitle"),
         uiOutput("summary"),
         tags$b("OPTIONAL"),
         checkboxInput("flag", "Add issue flag"),
         actionButton("complete", "Mark as complete"),
         id = "submitTab"
-      )
+      ),
+      id = "testTabs"
     )
   )
 )
@@ -141,7 +158,7 @@ server <- function(input, output, session) {
 
   # Populate reviewers
   x <- tbl(conn, "reviewer") |>
-    # filter(human == 1) |>
+    filter(human == 1) |>
     select(id, username) |>
     collect()
 
@@ -229,6 +246,22 @@ server <- function(input, output, session) {
         filter(competency_score_id %in% local(compScores$id)) |>
         collect()
 
+      reviewStatus <- review_assingment$statusCode %in% c(-1, 2)
+
+      if (reviewStatus) {
+        compStatus <- 2
+        overallStatus <- 2
+        submitStatus <- 2
+      } else {
+        compStatus <- nrow(compScores) > 0 + reviewStatus
+        overallStatus <- !is.na(review_assingment$utility) + reviewStatus
+        submitStatus <- compStatus & overallStatus + reviewStatus
+      }
+
+      tabStatusIcon("comp", compStatus, session = session)
+      tabStatusIcon("overall", overallStatus, session = session)
+      tabStatusIcon("submit", submitStatus, session = session)
+
       # Check if the eval was already reviewed and use the same prompt version
       review_prompt_id <- review_assingment$review_prompt_id
 
@@ -276,7 +309,7 @@ server <- function(input, output, session) {
           1:length(parsed$content$overallScore$util$options),
           parsed$content$overallScore$util$options
         ),
-        selected = if (length(review_assingment$utility) == 0) {
+        selected = if (is.na(review_assingment$utility)) {
           character(0)
         } else {
           review_assingment$utility
@@ -289,7 +322,7 @@ server <- function(input, output, session) {
           1:length(parsed$content$overallScore$sent$options),
           parsed$content$overallScore$sent$options
         ),
-        selected = if (length(review_assingment$sentiment) == 0) {
+        selected = if (is.na(review_assingment$sentiment)) {
           character(0)
         } else {
           review_assingment$sentiment
@@ -450,6 +483,8 @@ server <- function(input, output, session) {
     updateActionButton(inputId = "addComp", label = "Update competency review")
     updateReviewID(input$reviewID)
 
+    tabStatusIcon("comp", 1, session = session)
+    tabStatusIcon("submit", 1, session = session)
     showNotification(sprintf("Competency updated"), type = "message")
   })
 
@@ -458,7 +493,7 @@ server <- function(input, output, session) {
     # Check
     if (is.null(input$util) || is.null(input$sent)) {
       showModal(modalDialog(
-        HTML("Please make sure to select a Utility adn Sentiment score"),
+        HTML("Please make sure to indicate both a Utility and Sentiment score"),
         title = "Score missing"
       ))
     }
@@ -485,6 +520,8 @@ server <- function(input, output, session) {
     updateActionButton(inputId = "addOverall", label = "Update overall review")
     updateReviewID(input$reviewID)
 
+    tabStatusIcon("overall", 1, session = session)
+    tabStatusIcon("submit", 1, session = session)
     showNotification(sprintf("Scores updated"), type = "message")
   })
   # The summary of the review scores before submitting
@@ -536,7 +573,8 @@ server <- function(input, output, session) {
   observeEvent(input$complete, {
     if (
       (nrow(reviewScores()$compScores) == 0 ||
-        nrow(reviewScores()$overallScores) == 0) &
+        is.na(reviewScores()$overallScores$utility) ||
+        is.na(reviewScores()$overallScores$sent)) &
         !input$flag
     ) {
       showModal(modalDialog(
@@ -554,6 +592,9 @@ server <- function(input, output, session) {
     tbl_update(data, conn, "review_assignment", returnData = F)
 
     updateReviewID(input$reviewID)
+    tabStatusIcon("comp", 2, session = session)
+    tabStatusIcon("overall", 2, session = session)
+    tabStatusIcon("submit", 2, session = session)
     showNotification("Changes marked as complete", type = "message")
   })
 }
