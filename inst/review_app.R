@@ -2,12 +2,10 @@ library(bslib)
 library(shiny)
 library(DT)
 library(stringr)
-library(knitr)
 
 # https://rstudio.github.io/bslib/articles/cards/index.html
 
 dbInfo <- "../local/test.db"
-# dbInfo <- "../local/dev.db"
 
 ui <- page_fluid(
   theme = bs_theme(preset = "journal"),
@@ -16,6 +14,10 @@ ui <- page_fluid(
     .control-label {
       font-weight: bold;
     }
+  /* Make sure the dropdowns are not clipped by parent container */
+  .html-fill-item {
+    overflow: visible !important;
+  }
   "
   )),
   div(
@@ -104,6 +106,7 @@ ui <- page_fluid(
       nav_panel(
         "3. Submit",
         uiOutput("summary"),
+        tags$b("OPTIONAL"),
         checkboxInput("flag", "Add issue flag"),
         actionButton("complete", "Mark as complete"),
         id = "submitTab"
@@ -125,6 +128,7 @@ server <- function(input, output, session) {
   conn <- dbGetConn(dbInfo, session = session)
 
   reviewScores <- reactiveVal()
+  prompt <- reactiveVal()
 
   # Highlight selection module
   defaultEvidence <- reactiveVal(c())
@@ -207,7 +211,7 @@ server <- function(input, output, session) {
   })
 
   # Get the prompt and use it to create the rubric
-  prompt <- eventReactive(
+  observeEvent(
     input$reviewID,
     {
       reviewID <- as.integer(input$reviewID)
@@ -319,13 +323,13 @@ server <- function(input, output, session) {
         compText = compText
       ))
 
-      list(text = text, parsed = parsed)
+      prompt(list(text = text, parsed = parsed))
     },
     ignoreInit = T
   )
 
   # Update the rubric on competency change
-  observeEvent(input$cID, {
+  observeEvent(c(input$cID, input$reviewID), {
     req(reviewScores())
     # Get the previous values (if any)
     compScores <- reviewScores()$compScores |>
@@ -389,7 +393,7 @@ server <- function(input, output, session) {
         ) |>
           pull(evaluation)
       ),
-      style = "max-height: 700px; overflow-y: auto;"
+      style = "max-height: 75vh; overflow-y: auto;"
     )
   })
 
@@ -483,43 +487,50 @@ server <- function(input, output, session) {
 
     showNotification(sprintf("Scores updated"), type = "message")
   })
-  # TODO ISSUE WITH UPDATE FROM PREVIOUS SAVES IN UI
+  # The summary of the review scores before submitting
   output$summary <- renderUI({
     req(reviewScores())
+
+    # Add prompt text to IDs and scores
+    promptText <- prompt()$parsed$content
+
     compScores <- reviewScores()$compScores |>
-      select(specificity, competency_id)
+      select(specificity, competency_id) |>
+      left_join(
+        data.frame(
+          competency_id = 1:6,
+          competency = sapply(promptText$competencies, "[[", "name")
+        ),
+        by = "competency_id"
+      ) |>
+      left_join(
+        data.frame(
+          specificity = 1:length(promptText$compScore$spec$options),
+          specificity_score = promptText$compScore$spec$options
+        ),
+        by = "specificity"
+      ) |>
+      select(competency, score = specificity_score)
+
     overallScores <- reviewScores()$overallScores
+
+    # ACTUAL UI
     tagList(
       tags$h3("Review Summary"),
-      tags$label("Competencies"),
-      HTML(kable(compScores, format = "html")),
-      tags$label(sprintf("Utility Score: %i", overallScores$utility)),
-      tags$label(sprintf("Sentiment Score: %i", overallScores$sentiment))
+      tags$b("COMPETENCIES"),
+      datatable(
+        compScores,
+        options = list(paging = FALSE, searching = FALSE, info = FALSE),
+        selection = "none",
+        rownames = FALSE
+      ),
+      tags$b("UTILITY"),
+      p(promptText$overallScore$util$options[overallScores$utility]),
+      tags$b("SENTIMENT"),
+      p(promptText$overallScore$sent$options[overallScores$sentiment]),
+      tags$hr()
     )
   })
-
-  # output$review <- renderDT(
-  #   {
-  #     req(reviewScores())
-  #     # Replace ID with the competency description
-  #     reviewScores() |>
-  #       left_join(
-  #         data.frame(
-  #           competency_id = 1:6,
-  #           competency = sapply(
-  #             prompt()$parsed$content$competencies,
-  #             "[[",
-  #             "name"
-  #           ) |>
-  #             str_trunc(20)
-  #         ),
-  #         by = "competency_id"
-  #       ) |>
-  #       select(-competency_id, -id) |>
-  #       select(competency, everything())
-  #   },
-  #   rownames = F
-  # )
 
   #When the complete button is clicked
   observeEvent(input$complete, {
