@@ -1,11 +1,19 @@
-library(bslib)
-library(shiny)
-library(DT)
-library(stringr)
-
 # https://rstudio.github.io/bslib/articles/cards/index.html
 
 dbInfo <- "../local/test.db"
+
+# This is the db used during deployment, see deployShinyApp()
+if (!file.exists(dbInfo)) {
+  dbInfo <- "cfme.db"
+  # These are the libraries that the app needs when deployed
+  library(shiny)
+  library(bslib)
+  library(dplyr)
+  library(stringr)
+  library(DT)
+  library(sqlife)
+  library(CFME)
+}
 
 tabStatusIcon <- function(name, status, session) {
   removeUI(sprintf("#%sIcon", name), session = session)
