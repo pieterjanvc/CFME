@@ -128,6 +128,7 @@ getFunArgs <- function(exclude) {
 #' @param db Database to use
 #'
 #' @import shiny DT bslib
+#' @importFrom tidyr pivot_wider
 #'
 #' @returns Nothing
 #'
