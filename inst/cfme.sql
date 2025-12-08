@@ -82,13 +82,16 @@ CREATE TABLE "review_prompt" (
 
 CREATE TABLE "review_assignment" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+  "created" TEXT DEFAULT (datetime('now', 'localtime')),
+  "modified" TEXT DEFAULT (datetime('now', 'localtime')),
   "evaluation_id" INTEGER NOT NULL,
   "review_prompt_id" INTEGER NOT NULL,
   "reviewer_id" INTEGER NOT NULL,
   "statusCode" INTEGER NOT NULL,
   "include_questions" INTEGER,
   "redacted" INTEGER,
+  "utility" INTEGER,
+  "sentiment" INTEGER,
   "tokens_in" INTEGER,
   "tokens_out" INTEGER,
   "duration" REAL,
@@ -98,14 +101,18 @@ CREATE TABLE "review_assignment" (
   FOREIGN KEY ("reviewer_id") REFERENCES "reviewer"("id") ON DELETE CASCADE
 );
 
-CREATE TABLE "review_score" (
+CREATE TABLE "competency_score" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "review_assignment_id" INTEGER NOT NULL,
   "competency_id" INTEGER NOT NULL,
   "specificity" INTEGER NOT NULL,
-  "utility" INTEGER NOT NULL,
-  "sentiment" INTEGER NOT NULL,
-  "text_matches" TEXT NOT NULL,
   "note" TEXT,
   FOREIGN KEY ("review_assignment_id") REFERENCES "review_assignment"("id") ON DELETE CASCADE
+);
+
+CREATE TABLE "competency_text" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "competency_score_id" INTEGER NOT NULL,
+  "text_match" TEXT NOT NULL,
+  FOREIGN KEY ("competency_score_id") REFERENCES "competency_score"("id") ON DELETE CASCADE
 );

@@ -4,25 +4,19 @@
 \alias{llm_csv_response}
 \title{Check if the LLM response is in the expected CSV format}
 \usage{
-llm_csv_response(string, expColnames)
+llm_csv_response(string, reviewID)
 }
 \arguments{
 \item{string}{To parse as CSV}
 
-\item{expColnames}{(Optional) Named list of column names / type to expect.
-Defaults:
-"cID" = "integer",
-"text" = "character"
-"spec" = "integer"
-"utility" = "integer"
-"sent" = "integer"}
+\item{reviewID}{(Optional) Review assingment ID to add to the output}
 }
 \value{
 List with two elements
 \itemize{
 \item statusCode: 0 not valid CSV, 1 column names / number issue,
 2 column type error, 3 expected CSV format
-\item data: Data frame with results for statusCode 3, NULL otherwise
+\item data: List of 3 data frames with results for statusCode 3, NULL otherwise
 }
 }
 \description{

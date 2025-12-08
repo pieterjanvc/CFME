@@ -24,13 +24,11 @@ Exemplify the professional values of medicine, including compassion, integrity, 
 ### 6. Health Equity and the Structural and Social Determinants of Health
 Demonstrate the skills needed to address and improve health inequities through advocacy in partnership with patients and the medical community to improve health outcomes at the individual, organizational and societal levels with understanding of and sensitivity to the social determinants of health.
 
-## Scoring system
+## compScores: Individual competency scores
 
 For each detected competency collect the following data points:
 
 ### cID: Competency ID (1-6)
-
-### text: Relevant pieces of text (verbatim) from the assessment, separated by ; if needed. Only include minimal number of words needed to support the competency
 
 ### spec: Specificity score:
 - 1: briefly mentioned (keywords or bullet points) with no supporting evidence
@@ -38,19 +36,25 @@ For each detected competency collect the following data points:
 - 3: more detailed description with one piece of supporting evidence
 - 4: comprehensive description with multiple pieces of supporting evidence
 
+### text: Pieces of verbatim text from the assessment supporting the specificity score. Only use minimal number of words needed.
+
+## overallScores: Overall scores
+
+These scores are for the evaluation as a whole
+
 ### util: Utility score indicating how useful the feedback is to the student:
 - 1: low/not useful: Uses 3rd person, minimal specific information, often vague
 - 2: moderately useful: Specific to the student but hard to act upon
 - 3: highly useful: Very specific and directly applicable to professional improvement
 
-### sent: Sentiment score of the competency comments
-- 1: clearly negative / red flag
-- 2: slightly negative
-- 3: neutral
-- 4: slightly positive
-- 5: clearly positive
+### sent: Evaluator sentiment score for the overall review
+- 1: clearly negative or red flags
+- 2: slightly negative or coded language indicating potential critisism
+- 3: neutral or not enough information to indicate sentiment
+- 4: generic positive language (e.g. aspecific superlatives)
+- 5: specific positive language indicating the reviewer's effort to make the student stand out
 
 # TO RETURN
-Return the evaluation in a valid CSV format (no backticks or code markup, but quote text when needed)
-Each row is a detected competency with the following columns: cID, text, spec, util, sent
-
+A valid JSON string without any other code markup using the template below.
+Replace any example values with the real ones!
+{"compScores": [{"cID": 1,"spec": 1,"text": ["some text evidence","other text evidence"]},{}],"util": 1,"sent": 1}

@@ -49,13 +49,24 @@ parsePrompt <- function(prompt) {
   }) |>
     setNames(1:6)
 
-  # Scoring
-  scoring <- str_split(rubric[2], "(?m)^###[^#]")[[1]][-1] |>
+  # Competency Scoring
+  compScore <- str_split(rubric[2], "(?m)^###[^#]")[[1]][-1] |>
     str_split("\\:\\s?", n = 2)
 
-  scoring <- setNames(scoring, sapply(scoring, "[[", 1))
+  compScore <- setNames(compScore, sapply(compScore, "[[", 1))
 
-  scoring <- lapply(scoring, function(x) {
+  compScore <- lapply(compScore, function(x) {
+    x <- str_split(x[[2]], "\n\\-\\s?")[[1]] |> str_trim()
+    list(desciption = x[1], options = x[-1])
+  })
+
+  # Overall Scoring
+  overallScore <- str_split(rubric[3], "(?m)^###[^#]")[[1]][-1] |>
+    str_split("\\:\\s?", n = 2)
+
+  overallScore <- setNames(overallScore, sapply(overallScore, "[[", 1))
+
+  overallScore <- lapply(overallScore, function(x) {
     x <- str_split(x[[2]], "\n\\-\\s?")[[1]] |> str_trim()
     list(desciption = x[1], options = x[-1])
   })
@@ -68,7 +79,8 @@ parsePrompt <- function(prompt) {
     content = list(
       task = task,
       competencies = competencies,
-      scoring = scoring,
+      compScore = compScore,
+      overallScore = overallScore,
       retrunMsg = retrunMsg
     )
   ))
@@ -108,4 +120,27 @@ getFunArgs <- function(exclude) {
   } else {
     x
   }
+}
+
+
+#' Delop Shiny App
+#'
+#' @param db Database to use
+#'
+#' @import shiny DT bslib
+#'
+#' @returns Nothing
+#'
+deployShinyApp <- function(db, gitHubBranch) {
+  # Copy files
+  dir.create("deploy/CFME", showWarnings = F)
+  file.copy("inst/review_app.R", "deploy/CFME/app.R", overwrite = T)
+  file.copy("renv.lock", "deploy/CFME/renv.lock", overwrite = T)
+  file.copy(db, "deploy/CFME/cfme.db", overwrite = T)
+  devtools::install_github(paste0("pieterjanvc/CFME@", gitHubBranch))
+  # Add CFME to lock file
+  renv::record(
+    paste0("pieterjanvc/CFME@", gitHubBranch),
+    lockfile = "deploy/CFME/renv.lock"
+  )
 }

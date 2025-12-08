@@ -50,12 +50,9 @@ mod_highlight_ui <- function(
       ns("highlighted_text")
     ))),
     tags$label(label, class = "control-label"),
-    br(),
     HTML(info),
-    br(),
-    actionButton(ns("addSel"), "Add highlighted"),
-    div(id = ns("selList")),
-    br()
+    actionButton(ns("addSel"), "Add highlighted", width = "150px"),
+    div(id = ns("selList"))
   )
 }
 

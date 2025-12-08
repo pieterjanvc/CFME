@@ -396,38 +396,106 @@ dbAddPrompt <- function(prompt, conn, note, commit = T, showWarning = T) {
 #' Insert or update into review score table
 #'
 #' @param conn CFME database connection
-#' @param scores Data frame with scores
-#' @param reviewStatus (Optional) Set the review status
+#' @param statusCode Set the review status (0 = new,1 = in progress,2 = complete, -1 = flagged)
+#' @param overallScores Data frame matching review_assignment table which
+#' contains the overall scores
+#' @param compScores Data frame matching competency_scores table (new IDs will be generated)
+#' @param compText Data frame matching competency_text table (new IDs will be generated)
 #' @param commit (Default = TRUE) Commit the transaction
 #'
 #' @import sqlife dplyr
 #'
-#' @returns Data frame with changed reviews
+#' @returns A list with the updated results from the database
 #' @export
 #'
-dbReviewScore <- function(conn, scores, reviewStatus, commit = T) {
-  cols <- colnames(scores)
-  if ("id" %in% cols) {
-    # Update
-    result <- tbl_update(scores, conn, "review_score", commit = F)
+dbReviewUpdate <- function(
+  conn,
+  statusCode,
+  overallScores,
+  compScores,
+  compText,
+  removeNotListed = F,
+  commit = T
+) {
+  # Update the review_assignment table
+  if (!missing(overallScores)) {
+    # New overall scores
+    overallScores$statusCode <- statusCode
   } else {
-    result <- tbl_insert(scores, conn, "review_score", commit = F)
-  }
-
-  # Update the review statusCode if set
-  if (!missing(reviewStatus)) {
-    data <- scores |>
+    # No new overall scores
+    overallScores <- compScores |>
       select(id = review_assignment_id) |>
       distinct() |>
-      mutate(statusCode = reviewStatus)
-    . <- tbl_update(data, conn, "review_assignment", commit = F)
+      mutate(statusCode = statusCode)
   }
 
-  if (commit) {
-    dbCommit(conn)
+  # Add the modification timestamp
+  overallScores$modified <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+
+  overallScores <- tbl_update(
+    overallScores,
+    conn,
+    "review_assignment",
+    commit = F
+  )
+
+  # End if only overallScores were provided
+  if (missing(compScores)) {
+    if (commit) {
+      dbCommit(conn)
+    }
+
+    compScores <- tbl(conn, "competency_score") |>
+      filter(review_assignment_id %in% local(overallScores$id)) |>
+      collect()
+
+    compText <- tbl(conn, "competency_text") |>
+      filter(competency_score_id %in% local(compScores$id)) |>
+      collect()
+
+    return(list(
+      overallScores = overallScores,
+      compScores = compScores,
+      compText = compText
+    ))
   }
 
-  return(result)
+  # Delete existing competency results
+  #  competency_text has a cascading delete so will clean up automatically
+  toDelete <- tbl(conn, "competency_score") |>
+    filter(
+      review_assignment_id %in% local(overallScores$id)
+    ) |>
+    select(id, review_assignment_id, competency_id) |>
+    collect()
+
+  # In the app removeNotListed = F as competencies can be updated one by one
+  if (!removeNotListed) {
+    toDelete <- toDelete |>
+      inner_join(
+        compScores |> select(review_assignment_id, competency_id),
+        by = c("review_assignment_id", "competency_id")
+      )
+  }
+
+  tbl_delete(toDelete, conn, "competency_score", commit = F, returnData = F)
+
+  # Add new results
+  compScores <- tbl_insert(compScores, conn, "competency_score", commit = F)
+  compText <- compText |>
+    left_join(
+      compScores |>
+        select(competency_score_id = id, review_assignment_id, competency_id),
+      by = c("review_assignment_id", "competency_id")
+    ) |>
+    select(competency_score_id, text_match)
+  compText <- tbl_insert(compText, conn, "competency_text", commit = commit)
+
+  return(list(
+    overallScores = overallScores,
+    compScores = compScores,
+    compText = compText
+  ))
 }
 
 #' Add an AI response from llm_review() to the database
@@ -449,59 +517,85 @@ dbAIreview <- function(conn, llmReview, commit = T) {
   # Check which ones were a success
   success <- sapply(llmReview, "[[", "statusCode") == 3
 
-  # Get scores for successful ones
-  scores <- lapply(llmReview[success], function(review) {
-    # Add the evaluation data
-    data <- review$data
-    data$review_assignment_id = review$review_assignment_id
-    data |>
-      rename(
-        competency_id = cID,
-        specificity = spec,
-        utility = util,
-        sentiment = sent,
-        text_matches = text
-      )
-  }) |>
-    do.call(rbind, args = _)
+  # Combine data to be inserted into database
+  overallScores <- do.call(
+    rbind,
+    lapply(llmReview[success], function(x) {
+      x$data$overallScores |>
+        mutate(
+          tokens_in = x$tokens_in,
+          tokens_out = x$tokens_out,
+          duration = x$duration,
+          note = ifelse(x$tries == 1, NA, paste(x$tries, "tries"))
+        )
+    })
+  ) |>
+    rename(
+      utility = util,
+      sentiment = sent
+    )
 
-  # Check if we are updating existing or if this is new data
-  existing <- tbl(conn, "review_score") |>
-    filter(
-      review_assignment_id %in% local(unique(scores$review_assignment_id))
-    ) |>
-    select(id, review_assignment_id, competency_id) |>
-    collect()
-  scores <- scores |>
-    left_join(existing, by = c("review_assignment_id", "competency_id"))
-  # Add new scores
-  if (any(is.na(scores$id))) {
-    dbReviewScore(conn, scores |> filter(is.na(id)) |> select(-id), commit = F)
-  }
-  # Update existing scores
-  if (any(!is.na(scores$id))) {
-    dbReviewScore(conn, scores |> filter(!is.na(id)), commit = F)
-  }
+  compScores <- do.call(
+    rbind,
+    lapply(llmReview[success], "[[", c("data", "compScores"))
+  ) |>
+    rename(
+      review_assignment_id = id,
+      competency_id = cID,
+      specificity = spec
+    )
 
-  lapply(llmReview, function(x) {})
+  compText <- do.call(
+    rbind,
+    lapply(llmReview[success], "[[", c("data", "compText"))
+  ) |>
+    rename(
+      review_assignment_id = id,
+      competency_id = cID,
+    )
 
-  updateAssignment <- lapply(llmReview, function(x) within(x, rm(data))) |>
-    do.call(bind_rows, args = _) |>
-    mutate(
-      statusCode = ifelse(statusCode == 3, 2, 3),
-      note = ifelse(tries > 1, paste(tries, "tries"), NA)
-    ) |>
-    select(id = review_assignment_id, statusCode, everything(), -tries)
-
-  # Update the review assignment
-  updateAssignment <- tbl_update(
-    updateAssignment,
-    conn,
-    "review_assignment",
+  return(dbReviewUpdate(
+    conn = conn,
+    statusCode = 2,
+    overallScores = overallScores,
+    compScores = compScores,
+    compText = compText,
+    removeNotListed = T,
     commit = commit
-  )
+  ))
 
-  return(updateAssignment)
+  # # Delete existing results
+  # #  competency_text has a cascading delete so will clean up automatically
+  # existing <- tbl(conn, "competency_score") |>
+  #   filter(
+  #     review_assignment_id %in% local(overallScores$id)
+  #   ) |>
+  #   select(id, review_assignment_id, competency_id) |>
+  #   collect()
+  #
+  # tbl_delete(
+  #   data.frame(id = existing$id),
+  #   conn,
+  #   "competency_score",
+  #   commit = F,
+  #   returnData = F
+  # )
+  #
+  # # Add new results
+  # compScores <- tbl_insert(compScores, conn, "competency_score", commit = F)
+  # compText <- compText |>
+  #   left_join(
+  #     compScores |>
+  #       select(competency_score_id = id, review_assignment_id, competency_id),
+  #     by = c("review_assignment_id", "competency_id")
+  #   ) |>
+  #   select(competency_score_id, text_match)
+  # compText <- tbl_insert(compText, conn, "competency_text", commit = F)
+  #
+  # # Update existing scores (and commit)
+  # result <- tbl_update(overallScores, conn, "review_assignment", commit = T)
+  #
+  # return(result)
 }
 
 #' Internal function to insert or update into reviewer table
