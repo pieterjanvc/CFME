@@ -38,10 +38,14 @@ ui <- page_fluid(
     .control-label {
       font-weight: bold;
     }
-  /* Make sure the dropdowns are not clipped by parent container */
-  .html-fill-item {
-    overflow: visible !important;
-  }
+    /* Make sure the dropdowns are not clipped by parent container */
+    .html-fill-item {
+      overflow: visible !important;
+    }
+    /* DT selected row colour */
+    :root {
+    --dt-row-selected: 224, 168, 78;
+    }
   "
   )),
   # Add the DB download link
@@ -160,7 +164,7 @@ ui <- page_fluid(
       layout_columns(
         card(
           card_header("Comparison"),
-          DTOutput("analysis_table", height = "100%")
+          div(DTOutput("analysis_table"))
         )
       )
     )
@@ -685,12 +689,12 @@ server <- function(input, output, session) {
     )
   })
 
-  # input <- list(analysis_evalID = 660)
-  output$analysis_table <- renderDT({
+  analysisInfo <- reactive({
     overall <- tbl(conn, "review_assignment") |>
       filter(evaluation_id == as.integer(input$analysis_evalID)) |>
       left_join(
-        tbl(conn, "reviewer") |> select(reviewer_id = id, reviewer = username),
+        tbl(conn, "reviewer") |>
+          select(reviewer_id = id, reviewer = username),
         by = "reviewer_id"
       ) |>
       collect() |>
@@ -718,54 +722,88 @@ server <- function(input, output, session) {
         pull(prompt)
     )
 
-    bind_rows(
-      compInfo |>
-        select(reviewer, competency_id, specificity) |>
-        mutate(
-          specificity = parsed$content$compScore$spec$options[specificity]
-        ) |>
-        pivot_wider(
-          id_cols = competency_id,
-          names_from = reviewer,
-          values_from = specificity
-        ) |>
-        left_join(
-          data.frame(
-            competency_id = 1:6,
-            metric = paste(
-              "COMPETENCY -",
-              sapply(parsed$content$competencies, "[[", "name")
-            )
-          ),
-          by = "competency_id"
-        ) |>
-        select(-competency_id),
-      overall |>
-        select(utility, sentiment) |>
-        left_join(
-          data.frame(
-            utility = 1:length(parsed$content$overallScore$util$options),
-            util = parsed$content$overallScore$util$options
-          ),
-          by = "utility"
-        ) |>
-        left_join(
-          data.frame(
-            sentiment = 1:length(parsed$content$overallScore$sent$options),
-            sent = parsed$content$overallScore$sent$options
-          ),
-          by = "sentiment"
-        ) |>
-        select(util, sent) |>
-        t() |>
-        as.data.frame() |>
-        rename_with(function(x) {
-          as.character(overall$reviewer)
-        }) |>
-        mutate(metric = c("UTILITY", "SENTIMENT"))
-    ) |>
-      select(metric, everything())
+    list(
+      overall = overall,
+      compInfo = compInfo,
+      compText = compText,
+      prompt = parsed
+    )
   })
+
+  # input <- list(analysis_evalID = 660)
+  output$analysis_table <- renderDT(
+    {
+      # test <<- analysisInfo()
+      prompt <- analysisInfo()$prompt$content
+      bind_rows(
+        analysisInfo()$compInfo |>
+          select(reviewer, competency_id, specificity, note) |>
+          mutate(
+            specificity = prompt$compScore$spec$options[specificity],
+            specificity = ifelse(
+              is.na(note),
+              specificity,
+              sprintf(
+                "%s<br><i style='color:#e04233;'>NOTE: %s<i>",
+                specificity,
+                note
+              )
+            )
+          ) |>
+          pivot_wider(
+            id_cols = competency_id,
+            names_from = reviewer,
+            values_from = specificity
+          ) |>
+          left_join(
+            data.frame(
+              competency_id = 1:6,
+              metric = paste(
+                "COMPETENCY -",
+                sapply(prompt$competencies, "[[", "name")
+              )
+            ),
+            by = "competency_id"
+          ) |>
+          select(-competency_id),
+        analysisInfo()$overall |>
+          select(utility, sentiment, note) |>
+          mutate(
+            note = ifelse(
+              is.na(note),
+              NA,
+              sprintf("<i style='color:#e04233;'>%s<i>", note)
+            )
+          ) |>
+          left_join(
+            data.frame(
+              utility = 1:length(prompt$overallScore$util$options),
+              util = prompt$overallScore$util$options
+            ),
+            by = "utility"
+          ) |>
+          left_join(
+            data.frame(
+              sentiment = 1:length(prompt$overallScore$sent$options),
+              sent = prompt$overallScore$sent$options
+            ),
+            by = "sentiment"
+          ) |>
+          select(util, sent, note) |>
+          t() |>
+          as.data.frame() |>
+          rename_with(function(x) {
+            as.character(analysisInfo()$overall$reviewer)
+          }) |>
+          mutate(metric = c("UTILITY", "SENTIMENT", "REVIEW NOTE"))
+      ) |>
+        select(METRIC = metric, everything())
+    },
+    select = "single",
+    escape = F,
+    options = list(paging = F, searching = F, info = F, ordering = F),
+    rownames = F
+  )
 }
 
 shinyApp(ui, server)
