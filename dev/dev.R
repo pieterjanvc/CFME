@@ -103,7 +103,17 @@ llmReview <- llm_review(
   maxTries = 3
 )
 
+# test <- llm_review(
+#   dbInfo,
+#   review_assignment_id = 24,
+#   log = "local/apiLog.csv",
+#   maxTries = 3
+# )
+#
+# llmReview[6] <- test
+
 saveRDS(llmReview, "local/llmReviewBackup.rds")
+# llmReview <- readRDS("local/llmReviewBackup.rds")
 
 dbAIreview(conn, llmReview)
 

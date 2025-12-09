@@ -126,22 +126,25 @@ getFunArgs <- function(exclude) {
 #' Delop Shiny App
 #'
 #' @param db Database to use
+#' @param gitHubBranch CFME branch
+#' @param dev Deploy to dev app
 #'
 #' @import shiny DT bslib
 #' @importFrom tidyr pivot_wider
 #'
 #' @returns Nothing
 #'
-deployShinyApp <- function(db, gitHubBranch) {
+deployShinyApp <- function(db, gitHubBranch, dev = F) {
+  root <- ifelse(dev, "deploy/CFME-dev", "deploy/CFME")
   # Copy files
-  dir.create("deploy/CFME", showWarnings = F)
-  file.copy("inst/review_app.R", "deploy/CFME/app.R", overwrite = T)
-  file.copy("renv.lock", "deploy/CFME/renv.lock", overwrite = T)
-  file.copy(db, "deploy/CFME/cfme.db", overwrite = T)
+  dir.create(root, showWarnings = F)
+  file.copy("inst/review_app.R", file.path(root, "app.R"), overwrite = T)
+  file.copy("renv.lock", file.path(root, "renv.lock"), overwrite = T)
+  file.copy(db, file.path(root, "cfme.db"), overwrite = T)
   devtools::install_github(paste0("pieterjanvc/CFME@", gitHubBranch))
   # Add CFME to lock file
   renv::record(
     paste0("pieterjanvc/CFME@", gitHubBranch),
-    lockfile = "deploy/CFME/renv.lock"
+    lockfile = file.path(root, "renv.lock")
   )
 }
