@@ -1,5 +1,5 @@
 # devtools::install_github("pieterjanvc/sqlife", ref = "expandConnections")
-
+dbInfo <- "local/cfme.db"
 dbInfo <- "local/test.db"
 usernames <- c("PJ", "TK", "AW")
 seed <- 54321
@@ -98,7 +98,7 @@ review_assignment_ids <- tbl(conn, "review_assignment") |>
 # Only do two reviews for now
 llmReview <- llm_review(
   dbInfo,
-  review_assignment_id = review_assignment_ids[1],
+  review_assignment_id = review_assignment_ids,
   log = "local/apiLog.csv",
   maxTries = 3
 )

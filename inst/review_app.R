@@ -1,6 +1,6 @@
 # https://rstudio.github.io/bslib/articles/cards/index.html
 
-dbInfo <- "../local/test.db"
+dbInfo <- "../local/cfme.db"
 
 # This is the db used during deployment, see deployShinyApp()
 if (!file.exists(dbInfo)) {
@@ -161,6 +161,7 @@ ui <- page_fluid(
           uiOutput("analysis_evaluation")
         )
       ),
+      uiOutput("textMatches"),
       layout_columns(
         card(
           card_header("Comparison"),
@@ -716,7 +717,7 @@ server <- function(input, output, session) {
         by = "competency_score_id"
       )
 
-    parsed <- parsePrompt(
+    prompt <- parsePrompt(
       tbl(conn, "review_prompt") |>
         filter(id == local(max(overall$review_prompt_id))) |>
         pull(prompt)
@@ -726,77 +727,81 @@ server <- function(input, output, session) {
       overall = overall,
       compInfo = compInfo,
       compText = compText,
-      prompt = parsed
+      prompt = prompt
+    )
+  })
+
+  comparisonTable <- reactive({
+    # test <<- analysisInfo()
+    prompt <- analysisInfo()$prompt$content
+    bind_rows(
+      analysisInfo()$compInfo |>
+        select(reviewer, competency_id, specificity, note) |>
+        mutate(
+          specificity = prompt$compScore$spec$options[specificity],
+          specificity = ifelse(
+            is.na(note),
+            specificity,
+            sprintf(
+              "%s<br><i style='color:#e04233;'>NOTE: %s<i>",
+              specificity,
+              note
+            )
+          )
+        ) |>
+        pivot_wider(
+          id_cols = competency_id,
+          names_from = reviewer,
+          values_from = specificity
+        ) |>
+        left_join(
+          data.frame(
+            competency_id = 1:6,
+            metric = paste(
+              "COMPETENCY -",
+              sapply(prompt$competencies, "[[", "name")
+            )
+          ),
+          by = "competency_id"
+        ) |>
+        select(-competency_id),
+      analysisInfo()$overall |>
+        select(utility, sentiment, note) |>
+        mutate(
+          note = ifelse(
+            is.na(note),
+            NA,
+            sprintf("<i style='color:#e04233;'>%s<i>", note)
+          )
+        ) |>
+        left_join(
+          data.frame(
+            utility = 1:length(prompt$overallScore$util$options),
+            util = prompt$overallScore$util$options
+          ),
+          by = "utility"
+        ) |>
+        left_join(
+          data.frame(
+            sentiment = 1:length(prompt$overallScore$sent$options),
+            sent = prompt$overallScore$sent$options
+          ),
+          by = "sentiment"
+        ) |>
+        select(util, sent, note) |>
+        t() |>
+        as.data.frame() |>
+        rename_with(function(x) {
+          as.character(analysisInfo()$overall$reviewer)
+        }) |>
+        mutate(metric = c("UTILITY", "SENTIMENT", "REVIEW NOTE"))
     )
   })
 
   # input <- list(analysis_evalID = 660)
   output$analysis_table <- renderDT(
     {
-      # test <<- analysisInfo()
-      prompt <- analysisInfo()$prompt$content
-      bind_rows(
-        analysisInfo()$compInfo |>
-          select(reviewer, competency_id, specificity, note) |>
-          mutate(
-            specificity = prompt$compScore$spec$options[specificity],
-            specificity = ifelse(
-              is.na(note),
-              specificity,
-              sprintf(
-                "%s<br><i style='color:#e04233;'>NOTE: %s<i>",
-                specificity,
-                note
-              )
-            )
-          ) |>
-          pivot_wider(
-            id_cols = competency_id,
-            names_from = reviewer,
-            values_from = specificity
-          ) |>
-          left_join(
-            data.frame(
-              competency_id = 1:6,
-              metric = paste(
-                "COMPETENCY -",
-                sapply(prompt$competencies, "[[", "name")
-              )
-            ),
-            by = "competency_id"
-          ) |>
-          select(-competency_id),
-        analysisInfo()$overall |>
-          select(utility, sentiment, note) |>
-          mutate(
-            note = ifelse(
-              is.na(note),
-              NA,
-              sprintf("<i style='color:#e04233;'>%s<i>", note)
-            )
-          ) |>
-          left_join(
-            data.frame(
-              utility = 1:length(prompt$overallScore$util$options),
-              util = prompt$overallScore$util$options
-            ),
-            by = "utility"
-          ) |>
-          left_join(
-            data.frame(
-              sentiment = 1:length(prompt$overallScore$sent$options),
-              sent = prompt$overallScore$sent$options
-            ),
-            by = "sentiment"
-          ) |>
-          select(util, sent, note) |>
-          t() |>
-          as.data.frame() |>
-          rename_with(function(x) {
-            as.character(analysisInfo()$overall$reviewer)
-          }) |>
-          mutate(metric = c("UTILITY", "SENTIMENT", "REVIEW NOTE"))
-      ) |>
+      comparisonTable() |>
         select(METRIC = metric, everything())
     },
     select = "single",
@@ -804,6 +809,46 @@ server <- function(input, output, session) {
     options = list(paging = F, searching = F, info = F, ordering = F),
     rownames = F
   )
+
+  output$textMatches <- renderUI({
+    cID <- input$analysis_table_rows_selected
+    cID <- ifelse(
+      is.null(cID) || cID > n_distinct(analysisInfo()$compInfo$competency_id),
+      NA,
+      cID
+    )
+
+    if (is.na(cID)) {
+      return(tagList())
+    }
+
+    cID <- unique(analysisInfo()$compInfo$competency_id)[cID]
+
+    html <- analysisInfo()$compInfo |>
+      filter(competency_id == cID) |>
+      select(reviewer, id) |>
+      left_join(
+        analysisInfo()$compText |> select(id = competency_score_id, text_match),
+        by = "id"
+      ) |>
+      group_by(reviewer) |>
+      summarise(
+        html = as.character(tagList(
+          tags$label(reviewer[1]),
+          tags$ul(lapply(text_match, tags$li))
+        )),
+        .groups = "drop"
+      ) |>
+      pull(html) |>
+      paste(collapse = "")
+
+    tagList(
+      card(
+        card_header("Text Matches for selected competency"),
+        HTML(html)
+      )
+    )
+  })
 }
 
 shinyApp(ui, server)
