@@ -1,6 +1,7 @@
 ^renv$
 ^renv\.lock$
 ^CFME\.Rproj$
+^.Renviron$
 ^\.Rproj\.user$
 ^dev$
 ^local$

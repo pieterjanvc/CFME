@@ -148,3 +148,64 @@ deployShinyApp <- function(db, gitHubBranch, dev = F) {
     lockfile = file.path(root, "renv.lock")
   )
 }
+
+#' Backup and replace the DB using pins
+#'
+#' @param password Admin password, set `adminPass` as an environment variable
+#' @param dbPath Path to the DB
+#' @param exportPin (Default = "cfme_db_export") Pin name for the export / backup DB
+#' @param importPin (Default = "cfme_db_import") Pin name for the import DB
+#' @param nBackups (Default = 3) N most recent exports to keep
+#'
+#' @import pins
+#' @importFrom sqlife dbIsSQLite
+#'
+#' @returns list with success an msg
+#' @export
+#'
+pinDB <- function(
+  password,
+  dbPath,
+  exportPin = "cfme_db_export",
+  importPin = "cfme_db_import",
+  nBackups = 3
+) {
+  if (Sys.getenv("adminPass") == "" || Sys.getenv("adminPass") != password) {
+    return(list(success = F, msg = "Password incorrect or not activated"))
+  }
+
+  if (!dbIsSQLite(dbPath)) {
+    return(list(success = F, msg = "Database file not found"))
+  }
+
+  tryCatch(
+    {
+      board <- board_connect()
+      browser()
+      # Backup the existing DB (export it)
+      pin_upload(board, dbPath, exportPin)
+      pin_versions_prune(
+        board,
+        paste0(board$account, "/", exportPin),
+        n = nBackups
+      )
+      # Import the latest upload and replace it locally
+      new <- pin_download(board, paste0(board$account, "/", importPin))
+
+      if (!dbIsSQLite(new)) {
+        stop("Import file not a valid database")
+      }
+
+      file.copy(new, dbPath, overwrite = T)
+    },
+    error = function(e) {
+      return(list(success = F, msg = e))
+    }
+  )
+
+  # pin_versions(board, "cfme_db_import")
+  # recentEdit <- file.info(dbPath)$mtime >
+  #   pin_meta(board, paste0(board$account, "/cfme_db_export"))$created
+
+  return(list(success = T, msg = "Database refreshed"))
+}

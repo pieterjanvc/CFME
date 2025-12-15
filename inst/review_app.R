@@ -51,6 +51,8 @@ ui <- page_fluid(
   # Add the DB download link
   div(
     mod_dbSetup_ui("dbMod", "link"),
+    tags$br(),
+    actionLink("refreshDB", "Refresh Database"),
     style = "position:absolute;right:20px;top=0;z-index:9999;"
   ),
   navset_card_tab(
@@ -848,6 +850,24 @@ server <- function(input, output, session) {
         HTML(html)
       )
     )
+  })
+
+  observeEvent(input$refreshDB, {
+    showModal(modalDialog(
+      title = "ADMINPASSWORD",
+      passwordInput("adminPass", "Admin Password"),
+      actionButton("adminCheck", "Authenticate")
+    ))
+  })
+
+  observeEvent(input$adminCheck, {
+    check <- pinDB(input$adminPass, dbInfo)
+    if (check$success) {
+      showNotification("Database imported. Refresh the app", type = "message")
+    } else {
+      showNotification(check$msg, type = "error")
+    }
+    removeModal()
   })
 }
 
