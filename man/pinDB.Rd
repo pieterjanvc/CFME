@@ -5,23 +5,25 @@
 \title{Backup and replace the DB using pins}
 \usage{
 pinDB(
-  password,
   dbPath,
+  action,
   exportPin = "cfme_db_export",
   importPin = "cfme_db_import",
   nBackups = 3
 )
 }
 \arguments{
-\item{password}{Admin password, set \code{adminPass} as an environment variable}
-
 \item{dbPath}{Path to the DB}
+
+\item{action}{Any of the following: "import", "export". Can be both as vector}
 
 \item{exportPin}{(Default = "cfme_db_export") Pin name for the export / backup DB}
 
 \item{importPin}{(Default = "cfme_db_import") Pin name for the import DB}
 
 \item{nBackups}{(Default = 3) N most recent exports to keep}
+
+\item{password}{Admin password, set \code{adminPass} as an environment variable}
 }
 \value{
 list with success an msg

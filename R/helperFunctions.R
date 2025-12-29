@@ -153,6 +153,7 @@ deployShinyApp <- function(db, gitHubBranch, dev = F) {
 #'
 #' @param password Admin password, set `adminPass` as an environment variable
 #' @param dbPath Path to the DB
+#' @param action Any of the following: "import", "export". Can be both as vector
 #' @param exportPin (Default = "cfme_db_export") Pin name for the export / backup DB
 #' @param importPin (Default = "cfme_db_import") Pin name for the import DB
 #' @param nBackups (Default = 3) N most recent exports to keep
@@ -164,48 +165,115 @@ deployShinyApp <- function(db, gitHubBranch, dev = F) {
 #' @export
 #'
 pinDB <- function(
-  password,
   dbPath,
+  action,
   exportPin = "cfme_db_export",
   importPin = "cfme_db_import",
   nBackups = 3
 ) {
-  if (Sys.getenv("adminPass") == "" || Sys.getenv("adminPass") != password) {
-    return(list(success = F, msg = "Password incorrect or not activated"))
-  }
-
   if (!dbIsSQLite(dbPath)) {
     return(list(success = F, msg = "Database file not found"))
   }
 
+  if (
+    missing(action) ||
+      is.null(action) ||
+      !all(action %in% c("import", "export"))
+  ) {
+    return(list(success = F, msg = "Action must be: import, export or both"))
+  }
+
   tryCatch(
     {
-      board <- board_connect()
-      browser()
-      # Backup the existing DB (export it)
-      pin_upload(board, dbPath, exportPin)
-      pin_versions_prune(
-        board,
-        paste0(board$account, "/", exportPin),
-        n = nBackups
-      )
-      # Import the latest upload and replace it locally
-      new <- pin_download(board, paste0(board$account, "/", importPin))
-
-      if (!dbIsSQLite(new)) {
-        stop("Import file not a valid database")
+      if ("export" %in% action) {
+        backup <- pin_dev_set(exportPin, dbPath)
       }
 
-      file.copy(new, dbPath, overwrite = T)
+      if ("import" %in% action) {
+        # Import the latest upload and replace it locally
+        result <- pin_dev_get(importPin, dbPath, tempBackup = F)
+
+        if (!dbIsSQLite(dbPath)) {
+          file.remove(dbPath)
+          file.copy(result$tempBackup, dbPath)
+          file.remove(result$tempBackup)
+          stop("Import file not a valid database")
+        }
+
+        file.remove(result$tempBackup)
+      }
     },
     error = function(e) {
       return(list(success = F, msg = e))
     }
   )
+  return(list(
+    success = T,
+    msg = sprintf("Database %s completed", paste(action, collapse = " and "))
+  ))
+}
 
-  # pin_versions(board, "cfme_db_import")
-  # recentEdit <- file.info(dbPath)$mtime >
-  #   pin_meta(board, paste0(board$account, "/cfme_db_export"))$created
+#' Get a pin
+#'
+#' @param path Path to save the file to
+#' @param pinName name of the pin to access
+#'
+#' @import pins
+#' @importFrom stringr str_extract
+#'
+#' @returns list with new file and temp backup if set
+#' @export
+#'
+pin_dev_get <- function(
+  pinName,
+  path,
+  tempBackup = T
+) {
+  board <- board_connect()
+  fullPin <- paste0(board$account, "/", pinName[1])
 
-  return(list(success = T, msg = "Database refreshed"))
+  if (!fullPin %in% pin_list(board)) {
+    stop(pinName[1], " pin not found for ", board$account)
+  }
+
+  # Backup to temp if needed
+  if (tempBackup && file.exists(path)) {
+    ext <- str_extract(path, "\\.[^.]+$")
+    tFile <- tempfile(fileext = ifelse(is.na(ext), "", ext))
+    file.copy(path, tFile, overwrite = T)
+    print(paste("Temp backup created at", tFile))
+  }
+
+  new <- pin_download(board, fullPin)
+  file.remove(path)
+  file.copy(new, path, overwrite = T)
+  file.remove(new)
+
+  return(list(
+    new = path,
+    tempBackup = ifelse(tempBackup, tFile, NA_character_)
+  ))
+}
+
+#' Set a pin
+#'
+#' @param pinName Name of the pin
+#' @param path Path to the file to pin
+#' @param nBackups (Default = 3) N most recent pins to keep online
+#'
+#' @import pins
+#'
+#' @returns The name of the new pin
+#' @export
+#'
+pin_dev_set <- function(
+  pinName,
+  path,
+  nBackups = 3
+) {
+  board <- board_connect()
+  newPin <- pin_upload(board, path, pinName)
+  # Only keep n backups
+  pin_versions_prune(board, newPin, n = nBackups)
+  return(newPin)
 }

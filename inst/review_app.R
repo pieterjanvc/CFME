@@ -50,8 +50,8 @@ ui <- page_fluid(
   )),
   # Add the DB download link
   div(
-    mod_dbSetup_ui("dbMod", "link"),
-    tags$br(),
+    # mod_dbSetup_ui("dbMod", "link"),
+    # tags$br(),
     actionLink("refreshDB", "Refresh Database"),
     style = "position:absolute;right:20px;top=0;z-index:9999;"
   ),
@@ -852,22 +852,47 @@ server <- function(input, output, session) {
     )
   })
 
+  ### Import or export the database as pins
   observeEvent(input$refreshDB, {
     showModal(modalDialog(
       title = "ADMINPASSWORD",
+      checkboxGroupInput(
+        "pinAction",
+        "Action",
+        choices = c("import", "export", "download")
+      ),
       passwordInput("adminPass", "Admin Password"),
       actionButton("adminCheck", "Authenticate")
     ))
   })
 
   observeEvent(input$adminCheck, {
-    check <- pinDB(input$adminPass, dbInfo)
-    if (check$success) {
-      showNotification("Database imported. Refresh the app", type = "message")
-    } else {
-      showNotification(check$msg, type = "error")
+    # Check password
+    if (
+      Sys.getenv("adminPass") == "" ||
+        Sys.getenv("adminPass") != input$adminPass
+    ) {
+      showNotification("Password incorrect or not activated", type = "error")
+      return()
     }
+
+    # Set pins if needed
+    pinAction <- input$pinAction[input$pinAction %in% c("import", "export")]
+    if (length(pinAction) > 0) {
+      check <- pinDB(dbInfo, pinAction)
+
+      if (check$success) {
+        showNotification(check$msg, type = "message")
+      } else {
+        showNotification(check$msg, type = "error")
+      }
+    }
+
     removeModal()
+    # Download if set
+    if ("download" %in% input$pinAction) {
+      showModal(modalDialog(mod_dbSetup_ui("dbMod", "link")))
+    }
   })
 }
 
