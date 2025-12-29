@@ -4,10 +4,14 @@
 \alias{deployShinyApp}
 \title{Delop Shiny App}
 \usage{
-deployShinyApp(db, gitHubBranch)
+deployShinyApp(db, gitHubBranch, dev = F)
 }
 \arguments{
 \item{db}{Database to use}
+
+\item{gitHubBranch}{CFME branch}
+
+\item{dev}{Deploy to dev app}
 }
 \value{
 Nothing

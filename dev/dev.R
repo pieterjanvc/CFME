@@ -1,6 +1,9 @@
 # devtools::install_github("pieterjanvc/sqlife", ref = "expandConnections")
 
+# Get latest pinned version from online (you need ot manually refresh)
+dbInfo <- "local/cfme.db"
 dbInfo <- "local/test.db"
+# pin_dev_get("cfme_db_export", dbInfo) # Uncomment when new data is needed
 usernames <- c("PJ", "TK", "AW")
 seed <- 54321
 
@@ -27,7 +30,7 @@ combined_data <- readxl::read_xlsx(
 # Add default AI reviewer
 . <- dbReviewerAI(conn, model = formals(llm_call)$model)
 # Add prompt
-prompt <- readLines("inst/rubricPrompt.txt") |> paste(collapse = "\n")
+prompt <- readLines("inst/rubricPrompt.md") |> paste(collapse = "\n")
 review_prompt_id <- dbAddPrompt(prompt, conn)
 # Assign the same n random evals to each reviewer
 set.seed(seed)
@@ -98,17 +101,29 @@ review_assignment_ids <- tbl(conn, "review_assignment") |>
 # Only do two reviews for now
 llmReview <- llm_review(
   dbInfo,
-  review_assignment_id = review_assignment_ids[1],
+  review_assignment_id = review_assignment_ids,
   log = "local/apiLog.csv",
   maxTries = 3
 )
 
+# test <- llm_review(
+#   dbInfo,
+#   review_assignment_id = 24,
+#   log = "local/apiLog.csv",
+#   maxTries = 3
+# )
+#
+# llmReview[6] <- test
+
 saveRDS(llmReview, "local/llmReviewBackup.rds")
+# llmReview <- readRDS("local/llmReviewBackup.rds")
 
 dbAIreview(conn, llmReview)
 
 # Open the DB
 shell.exec(normalizePath(dbInfo))
+
+pin_dev_set("cfme_db_import", dbInfo)
 
 # Generate manual review doc
 # **************************

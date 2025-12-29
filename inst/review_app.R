@@ -1,6 +1,6 @@
 # https://rstudio.github.io/bslib/articles/cards/index.html
 
-dbInfo <- "../local/test.db"
+dbInfo <- "../local/cfme.db"
 
 # This is the db used during deployment, see deployShinyApp()
 if (!file.exists(dbInfo)) {
@@ -10,6 +10,7 @@ if (!file.exists(dbInfo)) {
   library(bslib)
   library(dplyr)
   library(stringr)
+  library(tidyr)
   library(DT)
   library(sqlife)
   library(CFME)
@@ -37,105 +38,138 @@ ui <- page_fluid(
     .control-label {
       font-weight: bold;
     }
-  /* Make sure the dropdowns are not clipped by parent container */
-  .html-fill-item {
-    overflow: visible !important;
-  }
+    /* Make sure the dropdowns are not clipped by parent container */
+    .html-fill-item {
+      overflow: visible !important;
+    }
+    /* DT selected row colour */
+    :root {
+    --dt-row-selected: 224, 168, 78;
+    }
   "
   )),
   # Add the DB download link
   div(
-    mod_dbSetup_ui("dbMod", "link"),
+    # mod_dbSetup_ui("dbMod", "link"),
+    # tags$br(),
+    actionLink("refreshDB", "Refresh Database"),
     style = "position:absolute;right:20px;top=0;z-index:9999;"
   ),
-  # Layout
-  layout_columns(
-    card(
-      card_header("1. Select Reviewer"),
+  navset_card_tab(
+    nav_panel(
+      title = "REVIEW",
+      # TAB 1 - Layout
+      layout_columns(
+        card(
+          card_header("1. Select Reviewer"),
 
-      selectInput("reviewerID", "Reviewer", choices = c()),
-      HTML(
-        "<i>You are the <b>reviewer</b> assessing the quality of an evaluation. ",
-        "The <b>evaluator</b> is the person who wrote the student evaluation below</i>"
+          selectInput("reviewerID", "Reviewer", choices = c()),
+          HTML(
+            "<i>You are the <b>reviewer</b> assessing the quality of an evaluation. ",
+            "The <b>evaluator</b> is the person who wrote the student evaluation below</i>"
+          )
+        ),
+        card(
+          card_header("2. Pick an evaluation"),
+          selectInput(
+            "reviewID",
+            "0 to start - 0 in progress - 0 competed",
+            choices = c(),
+            width = "100%"
+          ),
+          # checkboxInput("includeCompeted", "List completed", value = F),
+          checkboxInput("showQuestions", "Show questions", value = T)
+        )
+      ),
+
+      layout_columns(
+        card(
+          card_header("Student evaluation"),
+          uiOutput("evaluation")
+        ),
+        navset_card_tab(
+          nav_panel(
+            title = div(" Competencies", id = "compTitle"),
+            selectInput("cID", "Competency", choices = NULL, width = "100%"),
+            uiOutput("compDescr"),
+            mod_highlight_ui(
+              "highlights",
+              "evaluation",
+              "Text evidence (required)"
+            ),
+            radioButtons(
+              "spec",
+              "Specificity score",
+              choices = c(1:4),
+              inline = T
+            ),
+            textAreaInput(
+              "competencyComment",
+              "Optional competency comment",
+              placeholder = "Not part of the rubric, used internally",
+              width = "100%"
+            ),
+            actionButton("addComp", "Save competency review"),
+            value = "compTab"
+          ),
+          nav_panel(
+            title = div(" Overall Scores", id = "overallTitle"),
+            radioButtons(
+              "util",
+              "Utility score",
+              choices = c(1:3),
+              inline = F,
+              width = "100%"
+            ),
+            radioButtons(
+              "sent",
+              "Sentiment score",
+              choices = c(1:5),
+              inline = F,
+              width = "100%"
+            ),
+            textAreaInput(
+              "reviewComment",
+              "Optional review comment",
+              placeholder = "Not part of the rubric, used internally",
+              width = "100%"
+            ),
+            actionButton("addOverall", "Add overall review"),
+            id = "overallTab"
+          ),
+          nav_panel(
+            title = div(" Submit", id = "submitTitle"),
+            uiOutput("summary"),
+            tags$b("OPTIONAL"),
+            checkboxInput("flag", "Add issue flag"),
+            actionButton("complete", "Mark as complete"),
+            id = "submitTab"
+          ),
+          id = "testTabs"
+        )
       )
     ),
-    card(
-      card_header("2. Pick an evaluation"),
-      selectInput(
-        "reviewID",
-        "0 to start - 0 in progress - 0 competed",
-        choices = c(),
-        width = "100%"
+    nav_panel(
+      "ANALYSIS",
+      layout_columns(
+        card(
+          card_header("Evaluation"),
+          selectInput(
+            "analysis_evalID",
+            "Select a review to compare",
+            choices = c(),
+            width = "100%"
+          ),
+          uiOutput("analysis_evaluation")
+        )
       ),
-      # checkboxInput("includeCompeted", "List completed", value = F),
-      checkboxInput("showQuestions", "Show questions", value = T)
-    )
-  ),
-
-  layout_columns(
-    card(
-      card_header("Student evaluation"),
-      uiOutput("evaluation")
-    ),
-    navset_card_tab(
-      nav_panel(
-        title = div(" Competencies", id = "compTitle"),
-        selectInput("cID", "Competency", choices = NULL, width = "100%"),
-        uiOutput("compDescr"),
-        mod_highlight_ui(
-          "highlights",
-          "evaluation",
-          "Text evidence (required)"
-        ),
-        radioButtons(
-          "spec",
-          "Specificity score",
-          choices = c(1:4),
-          inline = T
-        ),
-        textAreaInput(
-          "competencyComment",
-          "Optional competency comment",
-          placeholder = "Not part of the rubric, used internally",
-          width = "100%"
-        ),
-        actionButton("addComp", "Save competency review"),
-        value = "compTab"
-      ),
-      nav_panel(
-        title = div(" Overall Scores", id = "overallTitle"),
-        radioButtons(
-          "util",
-          "Utility score",
-          choices = c(1:3),
-          inline = F,
-          width = "100%"
-        ),
-        radioButtons(
-          "sent",
-          "Sentiment score",
-          choices = c(1:5),
-          inline = F,
-          width = "100%"
-        ),
-        textAreaInput(
-          "reviewComment",
-          "Optional review comment",
-          placeholder = "Not part of the rubric, used internally",
-          width = "100%"
-        ),
-        actionButton("addOverall", "Add overall review"),
-        id = "overallTab"
-      ),
-      nav_panel(
-        title = div(" Submit", id = "submitTitle"),
-        uiOutput("summary"),
-        tags$b("OPTIONAL"),
-        checkboxInput("flag", "Add issue flag"),
-        actionButton("complete", "Mark as complete"),
-        id = "submitTab"
-      ),
-      id = "testTabs"
+      uiOutput("textMatches"),
+      layout_columns(
+        card(
+          card_header("Comparison"),
+          div(DTOutput("analysis_table"))
+        )
+      )
     )
   )
 )
@@ -434,7 +468,7 @@ server <- function(input, output, session) {
         ) |>
           pull(evaluation)
       ),
-      style = "max-height: 75vh; overflow-y: auto;"
+      style = "max-height: 70vh; overflow-y: auto;"
     )
   })
 
@@ -604,6 +638,261 @@ server <- function(input, output, session) {
     tabStatusIcon("overall", 2, session = session)
     tabStatusIcon("submit", 2, session = session)
     showNotification("Changes marked as complete", type = "message")
+  })
+
+  #### ANALYSIS TAB ####
+
+  # Pupulate the review dropdown
+  reviewInfo <- tbl(conn, "review_assignment") |>
+    left_join(
+      tbl(conn, "reviewer") |> select(reviewer_id = id, human),
+      by = "reviewer_id"
+    ) |>
+    group_by(evaluation_id, reviewer_id) |>
+    filter(modified == max(modified)) |>
+    group_by(evaluation_id) |>
+    # filter(any(statusCode > 0)) |> # Add once out of dev
+    summarise(
+      nAI = n() - sum(human),
+      nHuman = sum(human),
+      nComplete = sum(statusCode %in% c(-1, 2))
+    ) |>
+    ungroup() |>
+    collect()
+
+  updateSelectInput(
+    session,
+    "analysis_evalID",
+    choices = setNames(
+      reviewInfo$evaluation_id,
+      sprintf(
+        "%i - %i/%i completed",
+        reviewInfo$evaluation_id,
+        reviewInfo$nComplete,
+        reviewInfo$nAI + reviewInfo$nHuman
+      )
+    )
+  )
+
+  output$analysis_evaluation <- renderUI({
+    req(input$analysis_evalID)
+    div(
+      HTML(
+        dbGetEvals(
+          ids = as.integer(input$analysis_evalID),
+          conn = conn,
+          redacted = T,
+          includeQuestions = T,
+          html = T,
+          subtitleTag = "b"
+        ) |>
+          pull(evaluation)
+      ),
+      style = "max-height: 40vh; overflow-y: auto;"
+    )
+  })
+
+  analysisInfo <- reactive({
+    overall <- tbl(conn, "review_assignment") |>
+      filter(evaluation_id == as.integer(input$analysis_evalID)) |>
+      left_join(
+        tbl(conn, "reviewer") |>
+          select(reviewer_id = id, reviewer = username),
+        by = "reviewer_id"
+      ) |>
+      collect() |>
+      mutate(reviewer = ifelse(is.na(reviewer), "AI Model", reviewer))
+
+    compInfo <- tbl(conn, "competency_score") |>
+      filter(review_assignment_id %in% local(overall$id)) |>
+      collect() |>
+      left_join(
+        overall |> select(review_assignment_id = id, reviewer_id, reviewer),
+        by = "review_assignment_id"
+      )
+
+    compText <- tbl(conn, "competency_text") |>
+      filter(competency_score_id %in% local(compInfo$id)) |>
+      collect() |>
+      left_join(
+        compInfo |> select(competency_score_id = id, reviewer_id),
+        by = "competency_score_id"
+      )
+
+    prompt <- parsePrompt(
+      tbl(conn, "review_prompt") |>
+        filter(id == local(max(overall$review_prompt_id))) |>
+        pull(prompt)
+    )
+
+    list(
+      overall = overall,
+      compInfo = compInfo,
+      compText = compText,
+      prompt = prompt
+    )
+  })
+
+  comparisonTable <- reactive({
+    # test <<- analysisInfo()
+    prompt <- analysisInfo()$prompt$content
+    bind_rows(
+      analysisInfo()$compInfo |>
+        select(reviewer, competency_id, specificity, note) |>
+        mutate(
+          specificity = prompt$compScore$spec$options[specificity],
+          specificity = ifelse(
+            is.na(note),
+            specificity,
+            sprintf(
+              "%s<br><i style='color:#e04233;'>NOTE: %s<i>",
+              specificity,
+              note
+            )
+          )
+        ) |>
+        pivot_wider(
+          id_cols = competency_id,
+          names_from = reviewer,
+          values_from = specificity
+        ) |>
+        left_join(
+          data.frame(
+            competency_id = 1:6,
+            metric = paste(
+              "COMPETENCY -",
+              sapply(prompt$competencies, "[[", "name")
+            )
+          ),
+          by = "competency_id"
+        ) |>
+        select(-competency_id),
+      analysisInfo()$overall |>
+        select(utility, sentiment, note) |>
+        mutate(
+          note = ifelse(
+            is.na(note),
+            NA,
+            sprintf("<i style='color:#e04233;'>%s<i>", note)
+          )
+        ) |>
+        left_join(
+          data.frame(
+            utility = 1:length(prompt$overallScore$util$options),
+            util = prompt$overallScore$util$options
+          ),
+          by = "utility"
+        ) |>
+        left_join(
+          data.frame(
+            sentiment = 1:length(prompt$overallScore$sent$options),
+            sent = prompt$overallScore$sent$options
+          ),
+          by = "sentiment"
+        ) |>
+        select(util, sent, note) |>
+        t() |>
+        as.data.frame() |>
+        rename_with(function(x) {
+          as.character(analysisInfo()$overall$reviewer)
+        }) |>
+        mutate(metric = c("UTILITY", "SENTIMENT", "REVIEW NOTE"))
+    )
+  })
+
+  # input <- list(analysis_evalID = 660)
+  output$analysis_table <- renderDT(
+    {
+      comparisonTable() |>
+        select(METRIC = metric, everything())
+    },
+    select = "single",
+    escape = F,
+    options = list(paging = F, searching = F, info = F, ordering = F),
+    rownames = F
+  )
+
+  output$textMatches <- renderUI({
+    cID <- input$analysis_table_rows_selected
+    cID <- ifelse(
+      is.null(cID) || cID > n_distinct(analysisInfo()$compInfo$competency_id),
+      NA,
+      cID
+    )
+
+    if (is.na(cID)) {
+      return(tagList())
+    }
+
+    cID <- unique(analysisInfo()$compInfo$competency_id)[cID]
+
+    html <- analysisInfo()$compInfo |>
+      filter(competency_id == cID) |>
+      select(reviewer, id) |>
+      left_join(
+        analysisInfo()$compText |> select(id = competency_score_id, text_match),
+        by = "id"
+      ) |>
+      group_by(reviewer) |>
+      summarise(
+        html = as.character(tagList(
+          tags$label(reviewer[1]),
+          tags$ul(lapply(text_match, tags$li))
+        )),
+        .groups = "drop"
+      ) |>
+      pull(html) |>
+      paste(collapse = "")
+
+    tagList(
+      card(
+        card_header("Text Matches for selected competency"),
+        HTML(html)
+      )
+    )
+  })
+
+  ### Import or export the database as pins
+  observeEvent(input$refreshDB, {
+    showModal(modalDialog(
+      title = "ADMINPASSWORD",
+      checkboxGroupInput(
+        "pinAction",
+        "Action",
+        choices = c("import", "export", "download")
+      ),
+      passwordInput("adminPass", "Admin Password"),
+      actionButton("adminCheck", "Authenticate")
+    ))
+  })
+
+  observeEvent(input$adminCheck, {
+    # Check password
+    if (
+      Sys.getenv("adminPass") == "" ||
+        Sys.getenv("adminPass") != input$adminPass
+    ) {
+      showNotification("Password incorrect or not activated", type = "error")
+      return()
+    }
+
+    # Set pins if needed
+    pinAction <- input$pinAction[input$pinAction %in% c("import", "export")]
+    if (length(pinAction) > 0) {
+      check <- pinDB(dbInfo, pinAction)
+
+      if (check$success) {
+        showNotification(check$msg, type = "message")
+      } else {
+        showNotification(check$msg, type = "error")
+      }
+    }
+
+    removeModal()
+    # Download if set
+    if ("download" %in% input$pinAction) {
+      showModal(modalDialog(mod_dbSetup_ui("dbMod", "link")))
+    }
   })
 }
 
