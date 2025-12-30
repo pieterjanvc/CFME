@@ -1,6 +1,6 @@
 # TASK
 You will be assessing the quality of a provided a clinical clerkship evaluation written by a supervisor
-Detect any of the 6 competencies in the provided evaluation using the rubric below
+Detect any of the listed competencies in the provided evaluation using the rubric below
 
 # RUBRIC
 
@@ -28,7 +28,7 @@ Demonstrate the skills needed to address and improve health inequities through a
 
 For each detected competency collect the following data points:
 
-### cID: Competency ID (1-6)
+### cID: Competency ID (1-n)
 
 ### spec: Specificity score:
 - 1: briefly mentioned (keywords or bullet points) with no supporting evidence

@@ -326,7 +326,7 @@ server <- function(input, output, session) {
       updateSelectInput(
         inputId = "cID",
         choices = setNames(
-          1:6,
+          1:length(parsed$content$competencies),
           sapply(parsed$content$competencies, "[[", "name")
         )
       )
@@ -577,7 +577,7 @@ server <- function(input, output, session) {
       select(specificity, competency_id) |>
       left_join(
         data.frame(
-          competency_id = 1:6,
+          competency_id = 1:length(promptText$competencies),
           competency = sapply(promptText$competencies, "[[", "name")
         ),
         by = "competency_id"
@@ -758,7 +758,7 @@ server <- function(input, output, session) {
         ) |>
         left_join(
           data.frame(
-            competency_id = 1:6,
+            competency_id = 1:length(promptText$competencies),
             metric = paste(
               "COMPETENCY -",
               sapply(prompt$competencies, "[[", "name")
