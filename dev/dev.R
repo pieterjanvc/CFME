@@ -47,6 +47,14 @@ set.seed(seed)
   include_questions = T
 )
 
+# . <- dbReviewAssignment(
+#   conn,
+#   reviewer_id = 1,
+#   evaluation_id = 1,
+#   redacted = T,
+#   include_questions = T
+# )
+
 # Add manual reviews
 # *******************
 

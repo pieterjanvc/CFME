@@ -21,8 +21,11 @@ Evaluate, analyze and apply new and existing knowledge with advances and discove
 ### 5. Professionalism
 Exemplify the professional values of medicine, including compassion, integrity, social responsibility and respect for all persons and identities towards both colleagues and patients.
 
-### 6. Health Equity and the Structural and Social Determinants of Health
+### 6. Health Equity
 Demonstrate the skills needed to address and improve health inequities through advocacy in partnership with patients and the medical community to improve health outcomes at the individual, organizational and societal levels with understanding of and sensitivity to the social determinants of health.
+
+### 7. Skill
+Technical skills
 
 ## compScores: Individual competency scores
 

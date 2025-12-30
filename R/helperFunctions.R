@@ -244,9 +244,11 @@ pin_dev_get <- function(
     print(paste("Temp backup created at", tFile))
   }
 
+  # Copy and change permissions
   new <- pin_download(board, fullPin)
   file.remove(path)
   file.copy(new, path, overwrite = T)
+  Sys.chmod(path, file.info(dirname(path))$mode)
   file.remove(new)
 
   return(list(

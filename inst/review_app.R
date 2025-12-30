@@ -758,7 +758,7 @@ server <- function(input, output, session) {
         ) |>
         left_join(
           data.frame(
-            competency_id = 1:length(promptText$competencies),
+            competency_id = 1:length(prompt$competencies),
             metric = paste(
               "COMPETENCY -",
               sapply(prompt$competencies, "[[", "name")
