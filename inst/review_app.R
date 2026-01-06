@@ -1,6 +1,7 @@
 # https://rstudio.github.io/bslib/articles/cards/index.html
 
-dbInfo <- "../local/cfme.db"
+dbInfo <- "../local/ai_review.db"
+# dbInfo <- "../local/cfme.db"
 
 # This is the db used during deployment, see deployShinyApp()
 if (!file.exists(dbInfo)) {

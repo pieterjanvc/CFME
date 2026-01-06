@@ -168,7 +168,7 @@ llm_call <- function(
 
 #' Get the data from an LLM evaluation
 #'
-#' @param dbPath Path to a CFME database
+#' @param conn Connection to a CFME database
 #' @param review_assignment_ids IDs in review_assignment table
 #' @param log (Optional) Save token usage to extra file (will also be in database)
 #' @param maxTries (Default = 3) How many times to try in case the response is
@@ -183,12 +183,11 @@ llm_call <- function(
 #' @export
 #'
 llm_review <- function(
-  dbPath,
+  conn,
   review_assignment_ids,
   log,
   maxTries = 3
 ) {
-  conn <- dbGetConn(dbPath)
   # Get assignment info
   assignments <- tbl(conn, "review_assignment") |>
     filter(id %in% review_assignment_ids, statusCode != 2) |>
@@ -201,13 +200,10 @@ llm_review <- function(
   check <- setdiff(review_assignment_ids, assignments$id)
 
   if (length(check) > 0) {
-    dbFinish(
-      conn,
-      error = paste(
-        "The following review_assignment_ids were not found",
-        paste(check, collapse = ", ")
-      )
-    )
+    stop(paste(
+      "The following review_assignment_ids were not found",
+      paste(check, collapse = ", ")
+    ))
   }
 
   # Get all unique prompts needed
@@ -229,7 +225,7 @@ llm_review <- function(
     )
 
   # Call LLM for each review
-  result <- lapply(1:nrow(evals), function(j, log = log) {
+  info <- lapply(1:nrow(evals), function(j, log = log) {
     for (i in 1:maxTries) {
       # Actual LLM call
       tryCatch(
@@ -272,7 +268,6 @@ llm_review <- function(
 
     output
   })
-  dbFinish(conn)
 
-  return(result)
+  return(info)
 }
