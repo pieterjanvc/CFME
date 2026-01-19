@@ -1,6 +1,6 @@
 # ARGUMENTS
 # *********
-seed <- 20260106
+seed <- 20260119
 db_path <- "local/ai_review.db"
 dbSetup(db_path, "inst/cfme.sql")
 Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
@@ -25,9 +25,9 @@ set.seed(seed)
 evalSample <-
   tbl(conn, "evaluation") |>
   group_by(summary_flg, complete) |>
-  slice_sample(n = 15) |>
+  slice_sample(n = 3) |>
   pull(id)
-test <- dbReviewAssignment(
+assingments <- dbReviewAssignment(
   conn,
   reviewer_id = 1,
   evaluation_id = evalSample,
@@ -44,19 +44,19 @@ review_assignment_ids <- tbl(conn, "review_assignment") |>
 # Only do two reviews for now
 llmReview <- llm_review(
   conn,
-  review_assignment_id = review_assignment_ids[1:4],
+  review_assignment_id = review_assignment_ids,
   log = "local/apiLog.csv",
   maxTries = 3
 )
-saveRDS(llmReview, "local/llmReviewBackup.rds")
+# saveRDS(llmReview, "local/llmReviewBackup.rds")
 # llmReview <- readRDS("local/llmReviewBackup.rds")
 
-dbAIreview(conn, llmReview)
+reviews <- dbAIreview(conn, llmReview)
 system(paste("xdg-open", normalizePath(db_path)), wait = F)
 
 # Summary stats
 # *************
-specScaling <- 0.3
+contextScaling <- 0.3
 utilScaling <- 1.5
 sentScaling <- 0.3
 
@@ -66,11 +66,11 @@ test <- tbl(conn, "review_assignment") |>
     tbl(conn, "competency_score") |>
       group_by(id = review_assignment_id) |>
       summarise(
-        score = sum(specificity * specScaling),
+        score = sum(context * contextScaling),
         nComp = n(),
-        minSpec = min(specificity),
-        maxSpec = min(specificity),
-        meanSpec = mean((specificity))
+        minContext = min(context),
+        maxContext = min(context),
+        meanContext = mean((context))
       ),
     by = "id"
   ) |>

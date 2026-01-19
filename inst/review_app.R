@@ -99,9 +99,9 @@ ui <- page_fluid(
               "Text evidence (required)"
             ),
             radioButtons(
-              "spec",
-              "Specificity score",
-              choices = c(1:4),
+              "context",
+              "Context score",
+              choices = c(1:3),
               inline = T
             ),
             textAreaInput(
@@ -201,7 +201,7 @@ server <- function(input, output, session) {
 
   # Populate reviewers
   x <- tbl(conn, "reviewer") |>
-    filter(human == 1) |>
+    # filter(human == 1) |>
     select(id, username) |>
     collect()
 
@@ -332,14 +332,14 @@ server <- function(input, output, session) {
         )
       )
 
-      # Specificity score
+      # Context score
       #  The value is adjusted in the input$cID function
       updateRadioButtons(
-        inputId = "spec",
-        label = parsed$content$compScore$spec$desciption,
+        inputId = "context",
+        label = parsed$content$compScore$context$desciption,
         choices = setNames(
-          1:length(parsed$content$compScore$spec$options),
-          parsed$content$compScore$spec$options
+          1:length(parsed$content$compScore$context$options),
+          parsed$content$compScore$context$options
         ),
         selected = NULL
       )
@@ -419,11 +419,11 @@ server <- function(input, output, session) {
     resetSel(Sys.time())
 
     updateRadioButtons(
-      inputId = "spec",
+      inputId = "context",
       selected = if (nrow(compScores) == 0) {
         character(0)
       } else {
-        compScores$specificity
+        compScores$context
       }
     )
 
@@ -488,20 +488,20 @@ server <- function(input, output, session) {
 
     req(length(evidence) > 0)
 
-    if (is.null(input$spec)) {
+    if (is.null(input$context)) {
       showModal(modalDialog(
-        HTML("Please make sure to select a specificity score"),
+        HTML("Please make sure to select a context score"),
         title = "Text evidence missing"
       ))
     }
 
-    req(input$spec)
+    req(input$context)
 
     comment <- str_trim(input$competencyComment)
     compScores <- data.frame(
       review_assignment_id = as.integer(input$reviewID),
       competency_id = as.integer(input$cID),
-      specificity = as.integer(input$spec),
+      context = as.integer(input$context),
       note = ifelse(comment == "", NA, comment)
     )
 
@@ -575,7 +575,7 @@ server <- function(input, output, session) {
     promptText <- prompt()$parsed$content
 
     compScores <- reviewScores()$compScores |>
-      select(specificity, competency_id) |>
+      select(context, competency_id) |>
       left_join(
         data.frame(
           competency_id = 1:length(promptText$competencies),
@@ -585,12 +585,12 @@ server <- function(input, output, session) {
       ) |>
       left_join(
         data.frame(
-          specificity = 1:length(promptText$compScore$spec$options),
-          specificity_score = promptText$compScore$spec$options
+          context = 1:length(promptText$compScore$context$options),
+          context_score = promptText$compScore$context$options
         ),
-        by = "specificity"
+        by = "context"
       ) |>
-      select(competency, score = specificity_score)
+      select(competency, score = context_score)
 
     overallScores <- reviewScores()$overallScores
 
@@ -739,15 +739,15 @@ server <- function(input, output, session) {
     prompt <- analysisInfo()$prompt$content
     bind_rows(
       analysisInfo()$compInfo |>
-        select(reviewer, competency_id, specificity, note) |>
+        select(reviewer, competency_id, context, note) |>
         mutate(
-          specificity = prompt$compScore$spec$options[specificity],
-          specificity = ifelse(
+          context = prompt$compScore$context$options[context],
+          context = ifelse(
             is.na(note),
-            specificity,
+            context,
             sprintf(
               "%s<br><i style='color:#e04233;'>NOTE: %s<i>",
-              specificity,
+              context,
               note
             )
           )
@@ -755,7 +755,7 @@ server <- function(input, output, session) {
         pivot_wider(
           id_cols = competency_id,
           names_from = reviewer,
-          values_from = specificity
+          values_from = context
         ) |>
         left_join(
           data.frame(

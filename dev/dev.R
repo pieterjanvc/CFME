@@ -144,8 +144,8 @@ man <- bind_rows(
 ) |>
   mutate(evaluation_id = str_extract(eID, "\\d+") |> as.integer()) |>
   tidyr::fill(evaluation_id) |>
-  filter(!is.na(cID), !is.na(spec), !is.na(utility), !is.na(sent)) |>
-  filter(spec != 0) |>
+  filter(!is.na(cID), !is.na(context), !is.na(utility), !is.na(sent)) |>
+  filter(context != 0) |>
   select(-eID)
 
 # temp

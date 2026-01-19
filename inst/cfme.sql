@@ -105,7 +105,7 @@ CREATE TABLE "competency_score" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "review_assignment_id" INTEGER NOT NULL,
   "competency_id" INTEGER NOT NULL,
-  "specificity" INTEGER NOT NULL,
+  "context" INTEGER NOT NULL,
   "note" TEXT,
   FOREIGN KEY ("review_assignment_id") REFERENCES "review_assignment"("id") ON DELETE CASCADE
 );
