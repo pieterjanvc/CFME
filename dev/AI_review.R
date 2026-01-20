@@ -1,6 +1,6 @@
 # ARGUMENTS
 # *********
-seed <- 20260119
+seed <- 20260120
 db_path <- "local/ai_review.db"
 dbSetup(db_path, "inst/cfme.sql")
 Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
@@ -15,7 +15,7 @@ combined_data <- readxl::read_xlsx(
 )
 . <- dbAddEvaluations(combined_data, db_path, redactedOnly = T)
 # Add default AI reviewer
-. <- dbReviewerAI(conn, model = formals(llm_call)$model)
+. <- dbReviewerAI(conn, model = formals(llm_responses)$model)
 # Add default prompt
 prompt <- readLines("inst/rubricPrompt.md") |> paste(collapse = "\n")
 review_prompt_id <- dbAddPrompt(prompt, conn)
@@ -53,6 +53,7 @@ llmReview <- llm_review(
 
 reviews <- dbAIreview(conn, llmReview)
 system(paste("xdg-open", normalizePath(db_path)), wait = F)
+system(paste('start ""', normalizePath(db_path)), wait = F)
 
 # Summary stats
 # *************

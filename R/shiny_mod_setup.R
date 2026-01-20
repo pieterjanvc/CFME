@@ -2,7 +2,7 @@
 #'
 #' @param id Module ID
 #'
-#' @import shiny, DT
+#' @import shiny DT
 #'
 #' @returns Shiny UI element
 #' @export

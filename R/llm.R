@@ -82,7 +82,7 @@ llm_csv_response <- function(string, reviewID) {
   })
 }
 
-#' Call an Azure LLM
+#' Call an Azure chat completion LLM
 #'
 #' Note that this function expects an environment variable HMS_AZURE_API
 #' that contains the API key You can set this up using
@@ -105,7 +105,7 @@ llm_csv_response <- function(string, reviewID) {
 #'
 #' @export
 #'
-llm_call <- function(
+llm_chat_completion <- function(
   user,
   system,
   log,
@@ -141,6 +141,7 @@ llm_call <- function(
       "api-key" = Sys.getenv("HMS_AZURE_API")
     ) |>
     req_body_json(body) |>
+    req_error(is_error = ~FALSE) |>
     req_perform()
 
   if (resp_status(req) != 200) {
@@ -157,6 +158,79 @@ llm_call <- function(
         format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
         resp$usage$prompt_tokens,
         resp$usage$completion_tokens
+      ),
+      log,
+      append = T
+    )
+  }
+
+  return(resp)
+}
+
+#' Call an Azure response LLM
+#'
+#' Note that this function expects an environment variable HMS_AZURE_API
+#' that contains the API key You can set this up using
+#' `Sys.setenv(HMS_AZURE_API = "API token here")`
+#'
+#' @param input User prompt
+#' @param instructions Default = "You are a helpful AI assistant". System prompt
+#' @param log If set, the token usage is kept track of in this CSV file
+#' @param model Default = gpt-4o-1120. LLM model to use
+#' @param endpoint Default = https://azure-ai.hms.edu. Azure endpoint
+#'
+#' @import httr2
+#'
+#' @returns LLM Response object (list).
+#'
+#' If a log file is et a line is added to a CSV file with columns
+#' timestamp, promptTokens and responseTokens (headers not included)
+#'
+#' @export
+#'
+llm_responses <- function(
+  input,
+  instructions,
+  log,
+  model = "gpt-5-mini",
+  endpoint = "https://azure-ai.hms.edu"
+) {
+  # API info https://learn.microsoft.com/en-us/azure/ai-foundry/openai/reference
+
+  # Build the body
+  instructions <- ifelse(
+    missing(instructions),
+    "You are a helpful AI assistant",
+    instructions
+  )
+
+  req <- request(paste0(endpoint, "/openai/v1/responses")) |>
+    req_headers(
+      "Content-Type" = "application/json",
+      "api-key" = Sys.getenv("HMS_AZURE_API")
+    ) |>
+    req_body_json(list(
+      model = model,
+      input = input,
+      instructions = instructions
+    )) |>
+    # req_error(is_error = ~FALSE) |>
+    req_perform()
+
+  if (resp_status(req) != 200) {
+    stop(req)
+  }
+
+  resp <- resp_body_json(req)
+
+  # Write token usage to log file if set
+  if (!missing(log)) {
+    write(
+      sprintf(
+        '"%s",%i,%i',
+        format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+        resp$usage$input_tokens,
+        resp$usage$output_tokens
       ),
       log,
       append = T
@@ -231,14 +305,36 @@ llm_review <- function(
       tryCatch(
         {
           duration <- Sys.time()
-          result <- llm_call(
-            user = evals$evaluation[j],
-            system = prompts |>
-              filter(id == evals$review_prompt_id[j]) |>
-              pull(prompt),
-            model = evals$model[j],
-            log = log
-          )
+          if (evals$model[j] %in% c("gpt-4o-1120")) {
+            result <- llm_chat_completion(
+              user = evals$evaluation[j],
+              system = prompts |>
+                filter(id == evals$review_prompt_id[j]) |>
+                pull(prompt),
+              model = evals$model[j]
+            )
+
+            result <- data.frame(
+              content = result$choices[[1]]$message$content,
+              tokens_in = result$usage$prompt_tokens,
+              tokens_out = result$usage$completion_tokens
+            )
+          } else {
+            result <- llm_responses(
+              input = evals$evaluation[j],
+              instructions = prompts |>
+                filter(id == evals$review_prompt_id[j]) |>
+                pull(prompt),
+              model = evals$model[j]
+            )
+
+            result <- data.frame(
+              content = result$output[[2]]$content[[1]]$text,
+              tokens_in = result$usage$input_tokens,
+              tokens_out = result$usage$output_tokens
+            )
+          }
+
           duration <- difftime(Sys.time(), duration, units = "sec") |>
             as.numeric() |>
             round(2)
@@ -250,14 +346,14 @@ llm_review <- function(
 
       # Convert output CSV string to data frame (and check)
       output <- llm_csv_response(
-        result$choices[[1]]$message$content,
+        result$content,
         reviewID = evals$id[j]
       )
 
       # Add the response metadata
       output$review_assignment_id = evals$id[j]
-      output$tokens_in = result$usage$prompt_tokens
-      output$tokens_out = result$usage$completion_tokens
+      output$tokens_in = result$tokens_in
+      output$tokens_out = result$tokens_out
       output$duration = duration = duration
       output$tries = i
 

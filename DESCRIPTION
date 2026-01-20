@@ -14,7 +14,8 @@ Suggests:
   devtools,
   roxygen2,
   packrat,
-  rsconnect
+  rsconnect,
+  keyring
 Imports:
   bslib,
   dplyr,

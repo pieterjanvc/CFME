@@ -63,18 +63,18 @@ health professionals to provide coordinated, patient-centered care.
 
 ## compScores: Individual competency scores
 
-For each detected competency collect the following data points:
+Evaluate the quality of each detected competency description using the metrics below. :
 
 ### cID: Competency ID (1-n)
 
 ### context: Context Score:
 
-- 1: Decontextualized: Mentioned without specific context, e.g. empty praise or
-  a mostly subjective description.
-- 2: Specific: One or more specific examples are given, but the impact of those
-  is not clearly listed
-- 3: Impactful: Examples also detail direct and concrete impact on themselves,
-  others, or other measurable outcomes
+- 1: Decontextualized: Mentioned without specific context and use of generic
+  language.
+- 2: Specific: One or more specific examples are described in some detail, 
+  but the impact of those is not clearly listed
+- 3: Impactful: Examples are detailed and show direct and concrete impact on 
+  specific, measurable outcomes
 
 ### text: Verbatim evidence
 
@@ -104,5 +104,5 @@ These scores are for the evaluation as a whole
 # TO RETURN
 
 A valid JSON string without any other code markup using the template below.
-Replace any example values with the real ones! {"compScores": [{"cID": 1,"spec":
+Replace any example values with the real ones! {"compScores": [{"cID": 1,"context":
 1,"text": ["some text evidence","other text evidence"]},{}],"util": 1,"sent": 1}
