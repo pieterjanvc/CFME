@@ -63,18 +63,20 @@ health professionals to provide coordinated, patient-centered care.
 
 ## compScores: Individual competency scores
 
-Evaluate the quality of each detected competency description using the metrics below. :
+If the review contains a description that matches a specific competency 
+definition provide the following details. Avoid matching multiple competencies 
+to the same statement and pick the most fitting one. 
 
 ### cID: Competency ID (1-n)
 
 ### context: Context Score:
 
-- 1: Decontextualized: Mentioned without specific context and use of generic
-  language.
-- 2: Specific: One or more specific examples are described in some detail, 
-  but the impact of those is not clearly listed
-- 3: Impactful: Examples are detailed and show direct and concrete impact on 
-  specific, measurable outcomes
+- 1: Competency is briefly mentioned and its description mostly contains general 
+  qualifiers (nice, great, amazing, terrible, wonderful, …) 
+- 2: Non-specific evidence is given without clear examples to support it
+- 3: One very specific example (clear context and details) describing the competency
+- 4: Multiple, longer examples providing exceptional detail highlighting this competency
+
 
 ### text: Verbatim evidence
 
