@@ -1,6 +1,6 @@
 # ARGUMENTS
 # *********
-seed <- 20260120
+seed <- 20260121
 db_path <- "local/ai_review.db"
 dbSetup(db_path, "inst/cfme.sql")
 Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
@@ -35,10 +35,16 @@ assingments <- dbReviewAssignment(
   include_questions = T
 )
 
+# test <- tbl_delete(
+#   tbl(conn, "review_assignment") |> collect(),
+#   conn,
+#   "review_assignment"
+# )
+
 # Run eval through LLM and insert into DB
 # ***************************************
 review_assignment_ids <- tbl(conn, "review_assignment") |>
-  filter(reviewer_id == 1) |>
+  filter(reviewer_id == 1 & statusCode == 0) |>
   pull(id)
 
 # Only do two reviews for now
@@ -57,7 +63,7 @@ system(paste('start ""', normalizePath(db_path)), wait = F)
 
 # Summary stats
 # *************
-contextScaling <- 0.3
+specificityScaling <- 0.3
 utilScaling <- 1.5
 sentScaling <- 0.3
 
@@ -67,11 +73,11 @@ test <- tbl(conn, "review_assignment") |>
     tbl(conn, "competency_score") |>
       group_by(id = review_assignment_id) |>
       summarise(
-        score = sum(context * contextScaling),
+        score = sum(specificity * specificityScaling),
         nComp = n(),
-        minContext = min(context),
-        maxContext = min(context),
-        meanContext = mean((context))
+        minSpecificity = min(specificity),
+        maxSpecificity = min(specificity),
+        meanSpecificity = mean((specificity))
       ),
     by = "id"
   ) |>

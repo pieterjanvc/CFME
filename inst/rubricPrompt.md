@@ -69,12 +69,12 @@ to the same statement and pick the most fitting one.
 
 ### cID: Competency ID (1-n)
 
-### context: Context Score:
+### specificity: Specificity Score:
 
 - 1: Competency is briefly mentioned and its description mostly contains general 
   qualifiers (nice, great, amazing, terrible, wonderful, …) 
 - 2: Non-specific evidence is given without clear examples to support it
-- 3: One very specific example (clear context and details) describing the competency
+- 3: One very specific example (granular with details) describing the competency
 - 4: Multiple, longer examples providing exceptional detail highlighting this competency
 
 
@@ -99,12 +99,12 @@ These scores are for the evaluation as a whole
 - 1: clearly negative or red flags
 - 2: slightly negative or coded language indicating potential criticism
 - 3: neutral or not enough information to indicate sentiment
-- 4: generic positive language (e.g. aspecific superlatives)
-- 5: specific positive language indicating the reviewer's effort to make the
-  student stand out
+- 4: generic positive language (e.g. empty praise)
+- 5: specific positive language indicating the reviewer's effort to make this
+  particular student stand out
 
 # TO RETURN
 
 A valid JSON string without any other code markup using the template below.
-Replace any example values with the real ones! {"compScores": [{"cID": 1,"context":
+Replace any example values with the real ones! {"compScores": [{"cID": 1,"specificity":
 1,"text": ["some text evidence","other text evidence"]},{}],"util": 1,"sent": 1}

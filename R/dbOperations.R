@@ -542,7 +542,7 @@ dbAIreview <- function(conn, llmReview, commit = T) {
     rename(
       review_assignment_id = id,
       competency_id = cID,
-      context = context
+      specificity = specificity
     )
 
   compText <- do.call(

@@ -21,6 +21,7 @@ Imports:
   dplyr,
   DT,
   httr2,
+  pins,
   rlang,
   RSQLite,
   shiny,

@@ -24,7 +24,9 @@ llm_csv_response <- function(string, reviewID) {
           return(list(statusCode = 1, data = NULL))
         }
 
-        if (!all(names(check$compScores) %in% c("cID", "context", "text"))) {
+        if (
+          !all(names(check$compScores) %in% c("cID", "specificity", "text"))
+        ) {
           return(list(statusCode = 1, data = NULL))
         }
 
@@ -32,7 +34,7 @@ llm_csv_response <- function(string, reviewID) {
         allInts <- all(
           unlist(c(
             sapply(check$compScores, "[[", "cID"),
-            sapply(check$compScores, "[[", "context"),
+            sapply(check$compScores, "[[", "specificity"),
             check[c("util", "sent")]
           )) %%
             1 ==
@@ -48,7 +50,7 @@ llm_csv_response <- function(string, reviewID) {
         # Get comp scores
         compScores <- data.frame(
           cID = sapply(check$compScores, "[[", "cID"),
-          context = sapply(check$compScores, "[[", "context")
+          specificity = sapply(check$compScores, "[[", "specificity")
         )
 
         # Get comp text
