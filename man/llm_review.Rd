@@ -4,10 +4,10 @@
 \alias{llm_review}
 \title{Get the data from an LLM evaluation}
 \usage{
-llm_review(dbPath, review_assignment_ids, log, maxTries = 3)
+llm_review(conn, review_assignment_ids, log, maxTries = 3)
 }
 \arguments{
-\item{dbPath}{Path to a CFME database}
+\item{conn}{Connection to a CFME database}
 
 \item{review_assignment_ids}{IDs in review_assignment table}
 

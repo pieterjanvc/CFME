@@ -14,12 +14,14 @@ Suggests:
   devtools,
   roxygen2,
   packrat,
-  rsconnect
+  rsconnect,
+  keyring
 Imports:
   bslib,
   dplyr,
   DT,
   httr2,
+  pins,
   rlang,
   RSQLite,
   shiny,

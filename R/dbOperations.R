@@ -372,7 +372,7 @@ dbAddPrompt <- function(prompt, conn, note, commit = T, showWarning = T) {
   if (length(promptID) == 0) {
     parsed <- parsePrompt(prompt)
     if (!parsed$success) {
-      dbFinish(conn, error = parsed$msg)
+      stop(parsed$msg)
     }
 
     toInsert <- data.frame(
@@ -542,7 +542,7 @@ dbAIreview <- function(conn, llmReview, commit = T) {
     rename(
       review_assignment_id = id,
       competency_id = cID,
-      specificity = spec
+      specificity = specificity
     )
 
   compText <- do.call(

@@ -33,10 +33,10 @@ parsePrompt <- function(prompt) {
   competencies <- str_split(rubric[1], "(?m)^###\\s\\d.\\s")[[1]][-1] |>
     str_split("\n", n = 2)
 
-  if (length(competencies) != 6) {
+  if (length(competencies) == 0) {
     return(list(
       success = F,
-      msg = "Cannot find 6 competencies in the prompt",
+      msg = "Cannot find any competencies in the prompt",
       content = NULL
     ))
   }
@@ -47,7 +47,7 @@ parsePrompt <- function(prompt) {
       description = competency[2] |> str_trim()
     )
   }) |>
-    setNames(1:6)
+    setNames(1:length(competencies))
 
   # Competency Scoring
   compScore <- str_split(rubric[2], "(?m)^###[^#]")[[1]][-1] |>
@@ -244,9 +244,11 @@ pin_dev_get <- function(
     print(paste("Temp backup created at", tFile))
   }
 
+  # Copy and change permissions
   new <- pin_download(board, fullPin)
   file.remove(path)
   file.copy(new, path, overwrite = T)
+  Sys.chmod(path, file.info(dirname(path))$mode)
   file.remove(new)
 
   return(list(

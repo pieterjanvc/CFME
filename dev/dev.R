@@ -47,6 +47,14 @@ set.seed(seed)
   include_questions = T
 )
 
+# . <- dbReviewAssignment(
+#   conn,
+#   reviewer_id = 1,
+#   evaluation_id = 1,
+#   redacted = T,
+#   include_questions = T
+# )
+
 # Add manual reviews
 # *******************
 
@@ -136,8 +144,8 @@ man <- bind_rows(
 ) |>
   mutate(evaluation_id = str_extract(eID, "\\d+") |> as.integer()) |>
   tidyr::fill(evaluation_id) |>
-  filter(!is.na(cID), !is.na(spec), !is.na(utility), !is.na(sent)) |>
-  filter(spec != 0) |>
+  filter(!is.na(cID), !is.na(specificity), !is.na(utility), !is.na(sent)) |>
+  filter(specificity != 0) |>
   select(-eID)
 
 # temp
@@ -159,3 +167,28 @@ llmReview <- llm_review(
 saveRDS(llmReview, "local/llmReviewBackup.rds")
 
 dbAIreview(conn, llmReview)
+
+
+test <- llm_responses(
+  input = "Blue bird",
+  instructions = "Limerick style",
+  log = "local/apiLog.csv",
+  model = "gpt-5-mini"
+)
+
+test$output[[2]]$content[[1]]$text
+
+req <- request("https://azure-ai.hms.edu/openai/v1/responses") |>
+  req_headers(
+    "Content-Type" = "application/json",
+    "api-key" = Sys.getenv("HMS_AZURE_API")
+  ) |>
+  req_body_json(list(
+    model = "gpt-5-mini",
+    input = "Describe Earth to an alien",
+    instructions = "In one or two sentences"
+  )) |>
+  req_error(is_error = ~FALSE) |>
+  req_perform()
+
+test <- resp_body_json(req)

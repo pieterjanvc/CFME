@@ -1,6 +1,7 @@
 # https://rstudio.github.io/bslib/articles/cards/index.html
 
-dbInfo <- "../local/cfme.db"
+dbInfo <- "../local/ai_review.db"
+# dbInfo <- "../local/cfme.db"
 
 # This is the db used during deployment, see deployShinyApp()
 if (!file.exists(dbInfo)) {
@@ -98,9 +99,9 @@ ui <- page_fluid(
               "Text evidence (required)"
             ),
             radioButtons(
-              "spec",
+              "specificity",
               "Specificity score",
-              choices = c(1:4),
+              choices = c(1:3),
               inline = T
             ),
             textAreaInput(
@@ -200,7 +201,7 @@ server <- function(input, output, session) {
 
   # Populate reviewers
   x <- tbl(conn, "reviewer") |>
-    filter(human == 1) |>
+    # filter(human == 1) |>
     select(id, username) |>
     collect()
 
@@ -326,7 +327,7 @@ server <- function(input, output, session) {
       updateSelectInput(
         inputId = "cID",
         choices = setNames(
-          1:6,
+          1:length(parsed$content$competencies),
           sapply(parsed$content$competencies, "[[", "name")
         )
       )
@@ -334,11 +335,11 @@ server <- function(input, output, session) {
       # Specificity score
       #  The value is adjusted in the input$cID function
       updateRadioButtons(
-        inputId = "spec",
-        label = parsed$content$compScore$spec$desciption,
+        inputId = "specificity",
+        label = parsed$content$compScore$specificity$desciption,
         choices = setNames(
-          1:length(parsed$content$compScore$spec$options),
-          parsed$content$compScore$spec$options
+          1:length(parsed$content$compScore$specificity$options),
+          parsed$content$compScore$specificity$options
         ),
         selected = NULL
       )
@@ -418,7 +419,7 @@ server <- function(input, output, session) {
     resetSel(Sys.time())
 
     updateRadioButtons(
-      inputId = "spec",
+      inputId = "specificity",
       selected = if (nrow(compScores) == 0) {
         character(0)
       } else {
@@ -487,20 +488,20 @@ server <- function(input, output, session) {
 
     req(length(evidence) > 0)
 
-    if (is.null(input$spec)) {
+    if (is.null(input$specificity)) {
       showModal(modalDialog(
         HTML("Please make sure to select a specificity score"),
         title = "Text evidence missing"
       ))
     }
 
-    req(input$spec)
+    req(input$specificity)
 
     comment <- str_trim(input$competencyComment)
     compScores <- data.frame(
       review_assignment_id = as.integer(input$reviewID),
       competency_id = as.integer(input$cID),
-      specificity = as.integer(input$spec),
+      specificity = as.integer(input$specificity),
       note = ifelse(comment == "", NA, comment)
     )
 
@@ -577,15 +578,15 @@ server <- function(input, output, session) {
       select(specificity, competency_id) |>
       left_join(
         data.frame(
-          competency_id = 1:6,
+          competency_id = 1:length(promptText$competencies),
           competency = sapply(promptText$competencies, "[[", "name")
         ),
         by = "competency_id"
       ) |>
       left_join(
         data.frame(
-          specificity = 1:length(promptText$compScore$spec$options),
-          specificity_score = promptText$compScore$spec$options
+          specificity = 1:length(promptText$compScore$specificity$options),
+          specificity_score = promptText$compScore$specificity$options
         ),
         by = "specificity"
       ) |>
@@ -740,7 +741,7 @@ server <- function(input, output, session) {
       analysisInfo()$compInfo |>
         select(reviewer, competency_id, specificity, note) |>
         mutate(
-          specificity = prompt$compScore$spec$options[specificity],
+          specificity = prompt$compScore$specificity$options[specificity],
           specificity = ifelse(
             is.na(note),
             specificity,
@@ -758,7 +759,7 @@ server <- function(input, output, session) {
         ) |>
         left_join(
           data.frame(
-            competency_id = 1:6,
+            competency_id = 1:length(prompt$competencies),
             metric = paste(
               "COMPETENCY -",
               sapply(prompt$competencies, "[[", "name")
