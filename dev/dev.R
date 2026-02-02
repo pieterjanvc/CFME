@@ -4,7 +4,7 @@
 dbInfo <- "local/cfme.db"
 dbInfo <- "local/test.db"
 # pin_dev_get("cfme_db_export", dbInfo) # Uncomment when new data is needed
-usernames <- c("PJ", "TK", "AW")
+usernames <- c("Demo", "TK", "AW")
 seed <- 54321
 
 # Prev seeds
@@ -28,14 +28,15 @@ combined_data <- readxl::read_xlsx(
 # Add human reviewers
 . <- dbReviewerHuman(conn, username = usernames)
 # Add default AI reviewer
-. <- dbReviewerAI(conn, model = formals(llm_call)$model)
+. <- dbReviewerAI(conn, model = formals(llm_responses)$model)
 # Add prompt
 prompt <- readLines("inst/rubricPrompt.md") |> paste(collapse = "\n")
 review_prompt_id <- dbAddPrompt(prompt, conn)
 # Assign the same n random evals to each reviewer
 set.seed(seed)
-. <- evalSample <-
-  tbl(conn, "evaluation") |>
+evalSample <- tbl(conn, "evaluation") |>
+  select(summary_flg, complete, id) |>
+  collect() |> # collect because seeding not possible in SQLite
   group_by(summary_flg, complete) |>
   slice_sample(n = 2) |>
   pull(id)
@@ -46,59 +47,6 @@ set.seed(seed)
   redacted = T,
   include_questions = T
 )
-
-# . <- dbReviewAssignment(
-#   conn,
-#   reviewer_id = 1,
-#   evaluation_id = 1,
-#   redacted = T,
-#   include_questions = T
-# )
-
-# Add manual reviews
-# *******************
-
-# man <- bind_rows(
-#   readxl::read_xlsx("local/manualReviewScores.xlsx", 1) |>
-#     mutate(reviewer_id = 3),
-#   readxl::read_xlsx("local/manualReviewScores.xlsx", 2) |>
-#     mutate(reviewer_id = 2)
-# ) |>
-#   mutate(evaluation_id = str_extract(eID, "\\d+") |> as.integer()) |>
-#   tidyr::fill(evaluation_id) |>
-#   filter(!is.na(cID), !is.na(spec), !is.na(utility), !is.na(sent)) |>
-#   filter(spec != 0) |>
-#   select(-eID)
-
-# man |> group_by(reviewer_id, eID) |> filter(n_distinct(cID) != n())
-
-# eIds <- man |> select(reviewer_id, evaluation_id) |> distinct()
-#
-# assigned <- dbReviewAssignment(
-#   dbInfo,
-#   reviewer_id = eIds$reviewer_id,
-#   evaluation_id = eIds$evaluation_id,
-#   redacted = T,
-#   include_questions = T
-# )
-#
-# scores <- man |>
-#   mutate(text = ifelse(is.na(text), ".", text)) |>
-#   left_join(
-#     assigned |> select(id, evaluation_id, reviewer_id),
-#     by = c("evaluation_id", "reviewer_id")
-#   ) |>
-#   rename(
-#     review_assignment_id = id,
-#     competency_id = cID,
-#     specificity = spec,
-#     sentiment = sent,
-#     text_matches = text,
-#     note = comment
-#   ) |>
-#   select(-evaluation_id, -reviewer_id)
-#
-# result <- dbReviewScore(dbInfo, scores, reviewStatus = 2)
 
 # Run eval through LLM and insert into DB
 # ***************************************
@@ -114,22 +62,14 @@ llmReview <- llm_review(
   maxTries = 3
 )
 
-# test <- llm_review(
-#   dbInfo,
-#   review_assignment_id = 24,
-#   log = "local/apiLog.csv",
-#   maxTries = 3
-# )
-#
-# llmReview[6] <- test
-
 saveRDS(llmReview, "local/llmReviewBackup.rds")
 # llmReview <- readRDS("local/llmReviewBackup.rds")
 
 dbAIreview(conn, llmReview)
 
 # Open the DB
-shell.exec(normalizePath(dbInfo))
+system(paste("xdg-open", normalizePath(dbInfo)), wait = F)
+system(paste('start ""', normalizePath(dbInfo)), wait = F)
 
 pin_dev_set("cfme_db_import", dbInfo)
 

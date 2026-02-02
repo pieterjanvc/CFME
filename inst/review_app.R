@@ -1,6 +1,6 @@
 # https://rstudio.github.io/bslib/articles/cards/index.html
 
-dbInfo <- "../local/ai_review.db"
+dbInfo <- "../local/test.db"
 # dbInfo <- "../local/cfme.db"
 
 # This is the db used during deployment, see deployShinyApp()
@@ -79,7 +79,16 @@ ui <- page_fluid(
             width = "100%"
           ),
           # checkboxInput("includeCompeted", "List completed", value = F),
-          checkboxInput("showQuestions", "Show questions", value = T)
+          div(
+            uiOutput("aiReviewUI"),
+            checkboxInput(
+              "showQuestions",
+              "Show questions",
+              value = T,
+              width = "auto"
+            ),
+            class = "d-flex"
+          )
         )
       ),
 
@@ -236,7 +245,6 @@ server <- function(input, output, session) {
           )
         )
       )
-
     lblInfo <- reviews |>
       filter(statusCode < 3) |>
       group_by(statusCode) |>
@@ -268,6 +276,28 @@ server <- function(input, output, session) {
 
   observeEvent(input$reviewerID, {
     updateReviewID()
+  })
+
+  # Add the AI review button when not a human
+  output$aiReviewUI <- renderUI({
+    reviewID <- as.integer(input$reviewID)
+
+    # Check if the review is AI and new
+    check <- tbl(conn, "review_assignment") |>
+      filter(id == reviewID, statusCode == 0) |>
+      inner_join(
+        tbl(conn, "reviewer") |>
+          select(reviewer_id = id, human) |>
+          filter(human == 0),
+        by = "reviewer_id"
+      ) |>
+      collect()
+
+    if (nrow(check) == 0) {
+      tagList()
+    } else {
+      actionButton("aiReview", "Start AI review")
+    }
   })
 
   # Get the prompt and use it to create the rubric

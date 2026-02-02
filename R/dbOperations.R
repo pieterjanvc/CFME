@@ -735,6 +735,7 @@ dbReviewerAI <- function(
   reviewer <- data.frame(
     id = missingVal(id),
     human = F,
+    username = missingVal(model),
     model = missingVal(model),
     note = missingVal(note)
   )
