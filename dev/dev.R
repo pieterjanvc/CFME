@@ -2,7 +2,7 @@
 
 # Get latest pinned version from online (you need ot manually refresh)
 dbInfo <- "local/cfme.db"
-dbInfo <- "local/test.db"
+dbInfo <- "local/demo.db"
 # pin_dev_get("cfme_db_export", dbInfo) # Uncomment when new data is needed
 usernames <- c("Demo", "TK", "AW")
 seed <- 54321

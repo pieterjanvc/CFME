@@ -134,6 +134,8 @@ getFunArgs <- function(exclude) {
 #'
 #' @returns Nothing
 #'
+#' @export
+#'
 deployShinyApp <- function(db, gitHubBranch, dev = F) {
   root <- ifelse(dev, "deploy/CFME-dev", "deploy/CFME")
   # Copy files

@@ -1,6 +1,6 @@
 # https://rstudio.github.io/bslib/articles/cards/index.html
 
-dbInfo <- "../local/test.db"
+dbInfo <- "../local/demo.db"
 # dbInfo <- "../local/cfme.db"
 
 # This is the db used during deployment, see deployShinyApp()
@@ -15,6 +15,8 @@ if (!file.exists(dbInfo)) {
   library(DT)
   library(sqlife)
   library(CFME)
+} else {
+  Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
 }
 
 tabStatusIcon <- function(name, status, session) {
@@ -79,22 +81,24 @@ ui <- page_fluid(
             width = "100%"
           ),
           # checkboxInput("includeCompeted", "List completed", value = F),
-          div(
-            uiOutput("aiReviewUI"),
-            checkboxInput(
-              "showQuestions",
-              "Show questions",
-              value = T,
-              width = "auto"
-            ),
-            class = "d-flex"
-          )
+          uiOutput("aiReviewUI")
         )
       ),
 
       layout_columns(
         card(
-          card_header("Student evaluation"),
+          card_header(
+            div(
+              "Student evaluation",
+              checkboxInput(
+                "showQuestions",
+                "Show questions",
+                value = T,
+                width = "auto"
+              ),
+              class = "d-flex gap-3"
+            )
+          ),
           uiOutput("evaluation")
         ),
         navset_card_tab(
