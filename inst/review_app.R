@@ -300,9 +300,45 @@ server <- function(input, output, session) {
     }
   })
 
+  observeEvent(input$aiReview, {
+    showModal(modalDialog(
+      title = "AI Review in progress",
+      "Please be patient ...",
+      div(class = "spinner-border spinner-border-sm"),
+      easyClose = F,
+      footer = NULL
+    ))
+
+    # Run the AI review
+    llmReview <- llm_review(
+      conn,
+      review_assignment_id = as.integer(input$reviewID),
+      log = "apiLog.csv",
+      maxTries = 3
+    )
+
+    dbAIreview(conn, llmReview)
+
+    # Set the review as finished (or flag if error)
+    data <- data.frame(
+      id = as.integer(input$reviewID),
+      statusCode = ifelse(llmReview[[1]]$statusCode == 3, 2, -1)
+    )
+    tbl_update(data, conn, "review_assignment", returnData = F)
+
+    updateReviewID(input$reviewID)
+    tabStatusIcon("comp", 2, session = session)
+    tabStatusIcon("overall", 2, session = session)
+    tabStatusIcon("submit", 2, session = session)
+    removeModal()
+    forceRefresh(forceRefresh() + 1)
+    showNotification("AI review complete", type = "message")
+  })
+
   # Get the prompt and use it to create the rubric
+  forceRefresh <- reactiveVal(0)
   observeEvent(
-    input$reviewID,
+    c(input$reviewID, forceRefresh()),
     {
       reviewID <- as.integer(input$reviewID)
 
