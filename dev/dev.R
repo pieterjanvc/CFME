@@ -132,3 +132,8 @@ req <- request("https://azure-ai.hms.edu/openai/v1/responses") |>
   req_perform()
 
 test <- resp_body_json(req)
+
+pin_dev_set("cfme_db_import", "local/demo.db")
+
+pin_dev_get("cfme_db_export", "local/test.db")
+system(paste("xdg-open", normalizePath("local/test.db")), wait = F)
