@@ -1,7 +1,8 @@
 # https://rstudio.github.io/bslib/articles/cards/index.html
 
-dbInfo <- "../local/ai_review.db"
+dbInfo <- "../local/demo.db"
 # dbInfo <- "../local/cfme.db"
+dbInfo <- "~/Downloads/cfme.db"
 
 # This is the db used during deployment, see deployShinyApp()
 if (!file.exists(dbInfo)) {
@@ -15,6 +16,8 @@ if (!file.exists(dbInfo)) {
   library(DT)
   library(sqlife)
   library(CFME)
+} else {
+  Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
 }
 
 tabStatusIcon <- function(name, status, session) {
@@ -79,13 +82,24 @@ ui <- page_fluid(
             width = "100%"
           ),
           # checkboxInput("includeCompeted", "List completed", value = F),
-          checkboxInput("showQuestions", "Show questions", value = T)
+          uiOutput("aiReviewUI")
         )
       ),
 
       layout_columns(
         card(
-          card_header("Student evaluation"),
+          card_header(
+            div(
+              "Student evaluation",
+              checkboxInput(
+                "showQuestions",
+                "Show questions",
+                value = T,
+                width = "auto"
+              ),
+              class = "d-flex gap-3"
+            )
+          ),
           uiOutput("evaluation")
         ),
         navset_card_tab(
@@ -236,7 +250,6 @@ server <- function(input, output, session) {
           )
         )
       )
-
     lblInfo <- reviews |>
       filter(statusCode < 3) |>
       group_by(statusCode) |>
@@ -270,9 +283,67 @@ server <- function(input, output, session) {
     updateReviewID()
   })
 
+  # Add the AI review button when not a human
+  output$aiReviewUI <- renderUI({
+    reviewID <- as.integer(input$reviewID)
+
+    # Check if the review is AI and new
+    check <- tbl(conn, "review_assignment") |>
+      filter(id == reviewID, statusCode == 0) |>
+      inner_join(
+        tbl(conn, "reviewer") |>
+          select(reviewer_id = id, human) |>
+          filter(human == 0),
+        by = "reviewer_id"
+      ) |>
+      collect()
+
+    if (nrow(check) == 0) {
+      tagList()
+    } else {
+      actionButton("aiReview", "Start AI review")
+    }
+  })
+
+  observeEvent(input$aiReview, {
+    showModal(modalDialog(
+      title = "AI Review in progress",
+      "Please be patient ...",
+      div(class = "spinner-border spinner-border-sm"),
+      easyClose = F,
+      footer = NULL
+    ))
+
+    # Run the AI review
+    llmReview <- llm_review(
+      conn,
+      review_assignment_id = as.integer(input$reviewID),
+      log = "apiLog.csv",
+      maxTries = 3
+    )
+
+    dbAIreview(conn, llmReview)
+
+    # Set the review as finished (or flag if error)
+    data <- data.frame(
+      id = as.integer(input$reviewID),
+      statusCode = ifelse(llmReview[[1]]$statusCode == 3, 2, -1)
+    )
+    tbl_update(data, conn, "review_assignment", returnData = F)
+
+    updateReviewID(input$reviewID)
+    tabStatusIcon("comp", 2, session = session)
+    tabStatusIcon("overall", 2, session = session)
+    tabStatusIcon("submit", 2, session = session)
+    removeModal()
+    forceRefresh(forceRefresh() + 1)
+    showNotification("AI review complete", type = "message")
+  })
+
   # Get the prompt and use it to create the rubric
+  forceRefresh <- reactiveVal(0)
   observeEvent(
-    input$reviewID,
+    c(input$reviewID, forceRefresh()),
     {
       reviewID <- as.integer(input$reviewID)
 

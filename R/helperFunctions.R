@@ -134,6 +134,8 @@ getFunArgs <- function(exclude) {
 #'
 #' @returns Nothing
 #'
+#' @export
+#'
 deployShinyApp <- function(db, gitHubBranch, dev = F) {
   root <- ifelse(dev, "deploy/CFME-dev", "deploy/CFME")
   # Copy files
@@ -242,6 +244,8 @@ pin_dev_get <- function(
     tFile <- tempfile(fileext = ifelse(is.na(ext), "", ext))
     file.copy(path, tFile, overwrite = T)
     print(paste("Temp backup created at", tFile))
+  } else {
+    tempBackup <- F
   }
 
   # Copy and change permissions
