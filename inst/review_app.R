@@ -2,6 +2,7 @@
 
 dbInfo <- "../local/demo.db"
 # dbInfo <- "../local/cfme.db"
+dbInfo <- "~/Downloads/cfme.db"
 
 # This is the db used during deployment, see deployShinyApp()
 if (!file.exists(dbInfo)) {
