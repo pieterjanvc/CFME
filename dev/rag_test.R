@@ -2,6 +2,7 @@ library(ragnar)
 library(ellmer)
 library(dplyr)
 library(sqlife)
+library(httr2)
 
 ### FUNCTIONS
 rag_store <- function(path, model = "text-embedding-3-small") {
