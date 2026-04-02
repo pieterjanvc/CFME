@@ -1,35 +1,53 @@
 # TASK
 
-Analyze the clinical clerkship evaluation of medical students below and 
-identify which of the 8 competencies are explicitly addressed. For each one found, extract the minimal verbatim text that justifies its inclusion. If examples are given, make sure to include them as well, as this will be 
-important later.
+Analyze the clinical clerkship evaluation of medical students below and identify
+which of the 8 competencies are explicitly addressed. For each one found,
+extract the verbatim text that justifies its inclusion. Make sure to include
+illustrating examples are these will be important later.
 
 # RULES
 
 1. **Minimum bar**: Only include a competency if the evaluation makes a clear,
-   specific statement about this student's performance. Generic phrases that could apply to any student — "great attitude", "hard worker", "pleasure to work with" — do not constitute evidence for any specific competency. When in doubt, leave it out.
+   specific reference to it. Generic phrases that could apply to any competency
+   — "great attitude", "hard worker", "pleasure to work with" — do not
+   constitute evidence for any specific competency. When in doubt, leave it out.
 
-2. **Verbatim only**: Copy the exact text from the evaluation. Do not paraphrase,
-   summarize, or combine sentences. Use the shortest continuous span that makes the attribution unambiguous. Multiple spans across the text can be used if relevant.
+2. **Verbatim only**: Copy the exact text from the evaluation. Do not
+   paraphrase, summarize, or combine sentences. Use the shortest continuous span
+   that makes the attribution unambiguous. Multiple spans across the text can be
+   used if relevant. Don't forget to include all illustrating examples.
 
-3. **One competency per quote**: Assign each piece of text to maximum one competency — i.e. the most specific match. Do not repeat the same text under two competencies.
+3. **One competency per quote**: Assign each piece of text to maximum one
+   competency — i.e. the most specific match. Do not repeat the same text under
+   two competencies.
 
-4. **Missing is normal**: Most clerkship evaluations might only explicitly address only 2–4 competencies. Do not force a match to reach a higher number.
+4. **Missing is normal**: Most clerkship evaluations might only explicitly
+   address 2–4 competencies. Do not force a match to reach a higher number.
+
+5. **Include both positive and negative**: The aim is to extract all pieces of
+   text related to a competency regardless of sentiment (i.e. positive and
+   negative)
 
 # DISAMBIGUATION
 
 When text could fit more than one competency, apply these rules:
 
-- **Comp 3 vs. 5**: Comp 3 = quality and format of clinical documentation and formal
-  oral presentations (notes, H&Ps, SOAP notes, rounds presentations). Comp 5 = direct relationship and communication with patients and families during encounters.
+- **Comp 3 vs. 5**: Comp 3 = quality and format of clinical documentation and
+  formal oral presentations (notes, H&Ps, SOAP notes, rounds presentations).
+  Comp 5 = direct relationship and communication with patients and families
+  during encounters.
 
 - **Comp 1 vs. 4**: Comp 1 = demonstrating factual or conceptual knowledge, or
-  generating a differential diagnosis. Comp 4 = applying knowledge to reason through a specific patient's problem and arrive at a management plan.
+  generating a differential diagnosis. Comp 4 = applying knowledge to reason
+  through a specific patient's problem and arrive at a management plan.
 
 - **Comp 5 vs. 8**: Comp 5 = interactions with patients and caregivers only.
-  Comp 8 = collaboration with physicians, nurses, and other health professionals.
+  Comp 8 = collaboration with physicians, nurses, and other health
+  professionals.
 
-- **Comp 7 vs. others**: Only assign to Comp 7 for explicitly professional conduct — ethics, reliability, patient safety, punctuality, accountability. Do not use Comp 7 as a catch-all for positive character traits.
+- **Comp 7 vs. others**: Only assign to Comp 7 for explicitly professional
+  conduct — ethics, reliability, patient safety, punctuality, accountability. Do
+  not use Comp 7 as a catch-all for positive character traits.
 
 # COMPETENCIES
 
