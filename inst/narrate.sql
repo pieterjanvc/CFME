@@ -283,9 +283,11 @@ INSERT INTO "status_codes" ("table", "code", "description", "note") VALUES
   -- review_assignment: AI batch only
   ('review_assignment', -2, 'AI extraction failed',       NULL),
   ('review_assignment', -3, 'AI scoring failed',          NULL),
+  ('review_assignment', -4, 'Extraction conflict unresolved', 'Resolve attempts exhausted (see llm_comp_resolve_run()); needs human review'),
   ('review_assignment',  3, 'Batch extraction complete',  NULL),
   ('review_assignment',  4, 'Batch scoring submitted',    NULL),
   ('review_assignment',  5, 'Batch scoring complete',     NULL),
+  ('review_assignment',  6, 'Extraction conflict pending', 'Rule-2 ("one competency per quote") violation detected by dbCompExtractionCheckConflicts(); needs resolution'),
   -- batch
   ('batch', -3, 'Cancelled',   NULL),
   ('batch', -2, 'Expired',     NULL),
@@ -440,7 +442,14 @@ INSERT INTO "rule" ("id", "title", "description") VALUES
     'competencies. Do not force a match to reach a higher number.'),
   (5, 'Include both positive and negative',
     'The aim is to extract all pieces of text related to a competency ' ||
-    'regardless of sentiment (i.e. positive and negative)');
+    'regardless of sentiment (i.e. positive and negative)'),
+  (6, 'No duplicate or paraphrased text across competencies',
+    'Do not assign the same piece of text - or a reworded restatement of ' ||
+    'the same underlying observation - to more than one competency, even ' ||
+    'if the exact wording differs between occurrences. Before finalizing, ' ||
+    'check each candidate quote against quotes already assigned to other ' ||
+    'competencies; if it describes the same behavior or observation, keep ' ||
+    'it only under the single most specific competency.');
 
 INSERT INTO "rubric" ("id") VALUES (1);
 
@@ -458,4 +467,4 @@ INSERT INTO "rubric_sentiment" ("rubric_id", "sentiment_id") VALUES
   (1, 1), (1, 2), (1, 3), (1, 4), (1, 5);
 
 INSERT INTO "rubric_rule" ("rubric_id", "rule_id", "order") VALUES
-  (1, 1, 1), (1, 2, 2), (1, 3, 3), (1, 4, 4), (1, 5, 5);
+  (1, 1, 1), (1, 2, 2), (1, 3, 3), (1, 4, 4), (1, 5, 5), (1, 6, 6);

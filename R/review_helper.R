@@ -18,6 +18,23 @@ llm_build_extract_body <- function(evaluation_text, prompt) {
   )
 }
 
+#' Build a responses API request body for conflict resolution
+#'
+#' @param conflicts_text Formatted CONFLICTS section text (build_resolve_conflicts()$text)
+#' @param prompt System prompt (resolve instructions, from prompt_generate_resolve())
+#' @returns Named list for use as a responses API body (model field excluded)
+llm_build_resolve_body <- function(conflicts_text, prompt) {
+  list(
+    instructions = prompt,
+    input = paste0(
+      "# CONFLICTS\n\n", conflicts_text,
+      "\n\nRespond with JSON as instructed."
+    ),
+    text = list(format = list(type = "json_object")),
+    max_output_tokens = 2000L
+  )
+}
+
 #' Build a responses API request body for competency scoring
 #'
 #' @param extractions List of extraction items; each has cIndex (integer order
@@ -191,7 +208,152 @@ llm_comp_score <- function(
   )
 }
 
+#' Resolve rule-2 conflicts flagged by dbCompExtractionCheckConflicts()
+#'
+#' Calls the Azure responses API and parses the JSON output into a
+#' resolutions list. Shared by the live and (future) batch resolve
+#' workflows, mirroring llm_comp_extract()'s structure.
+#'
+#' @param conflicts_text Formatted CONFLICTS section text (build_resolve_conflicts()$text)
+#' @param prompt System prompt (resolve instructions, from prompt_generate_resolve())
+#' @param model Azure deployment name. Default = "gpt-5.1"
+#' @param endpoint Azure endpoint base URL
+#' @param debug Return raw model output text as well. Default = FALSE
+#'
+#' @import httr2
+#' @importFrom jsonlite fromJSON
+#' @returns List with:
+#'   - statusCode: run status_codes(conn, "llm_comp_extract") for code details (shared codes)
+#'   - data: list with resolutions (each has conflictId and cIndex) on success, NULL otherwise
+#'   - tokens_in, tokens_out: integer token counts
+#'   - raw: raw response text if debug = TRUE, otherwise NULL
+#' @export
+llm_comp_resolve <- function(
+  conflicts_text,
+  prompt,
+  model = "gpt-5.1",
+  endpoint = "https://azure-ai.hms.edu",
+  debug = FALSE
+) {
+  body <- llm_build_resolve_body(conflicts_text, prompt)
+  body$model <- model
+
+  req <- request(paste0(endpoint, "/openai/v1/responses")) |>
+    req_headers(
+      "Content-Type" = "application/json",
+      "api-key" = Sys.getenv("HMS_AZURE_API")
+    ) |>
+    req_body_json(body) |>
+    req_error(is_error = ~FALSE) |>
+    req_perform()
+
+  if (resp_status(req) != 200) {
+    return(list(
+      statusCode = 0, data = NULL, tokens_in = NA, tokens_out = NA,
+      raw = if (debug) resp_body_string(req) else NULL
+    ))
+  }
+
+  resp <- resp_body_json(req)
+  raw_text <- resp$output[[1]]$content[[1]]$text
+  tokens_in <- resp$usage$input_tokens
+  tokens_out <- resp$usage$output_tokens
+
+  parsed <- tryCatch(
+    fromJSON(raw_text, simplifyVector = FALSE),
+    error = function(e) NULL
+  )
+
+  if (is.null(parsed) || !("resolutions" %in% names(parsed))) {
+    return(list(
+      statusCode = 1, data = NULL,
+      tokens_in = tokens_in, tokens_out = tokens_out,
+      raw = if (debug) raw_text else NULL
+    ))
+  }
+
+  data <- parsed$resolutions
+
+  list(
+    statusCode = 2, data = data,
+    tokens_in = tokens_in, tokens_out = tokens_out,
+    raw = if (debug) raw_text else NULL
+  )
+}
+
 # ─── DB fetch helpers ─────────────────────────────────────────────────────────
+
+#' Blank out verbatim-repeated paragraphs within a single evaluation's text
+#'
+#' Some evaluations (e.g. a "Clerkship Director's Summative Comments" answer)
+#' legitimately quote earlier free-text answers of the same evaluation
+#' verbatim as supporting evidence - a normal, expected authoring pattern in
+#' this dataset, not a data error (confirmed against the raw source
+#' spreadsheet for a real flagged case). Left as-is, the AI extraction prompt
+#' sees the same content twice and can end up assigning each physical copy to
+#' a different competency, which violates rule 2 ("one competency per quote")
+#' even though every individual quote it returns is technically real text.
+#'
+#' This collapses exact repeats before the text reaches the LLM: splits the
+#' text into paragraphs (blank-line separated), normalizes each one (case,
+#' whitespace, surrounding quote marks), and blanks out every occurrence
+#' after the first of any paragraph at least min_chars long that repeats
+#' elsewhere in the same text. Only the LLM's input copy is affected -
+#' dbCompExtraction() re-fetches the untouched original text separately via
+#' dbGetEvals() to locate/highlight whatever the model ends up quoting, so
+#' the surviving (first) occurrence's real position is unaffected.
+#'
+#' This is a purely mechanical, exact-match pass - it does not catch
+#' paraphrased restatements of the same content (different wording, same
+#' underlying observation). That gap is deliberately out of scope for now;
+#' dbCompExtractionCheckConflicts() remains the post-hoc safety net for
+#' whatever still slips through.
+#'
+#' @param text Evaluation text (plain, as returned by dbGetEvals(html = FALSE))
+#' @param min_chars Minimum normalized paragraph length (characters) to
+#'   consider for deduplication (default 40) - shorter paragraphs are left
+#'   alone even if repeated, since brief generic phrases aren't a real
+#'   conflict risk and dropping them could remove real signal
+#'
+#' @returns The input text with second-and-later occurrences of any
+#'   sufficiently long repeated paragraph removed (paragraph breaks
+#'   otherwise preserved)
+#' @export
+dedupe_repeated_paragraphs <- function(text, min_chars = 40) {
+  if (is.na(text) || !nzchar(text)) {
+    return(text)
+  }
+
+  paragraphs <- strsplit(text, "\n\\s*\n")[[1]]
+  if (length(paragraphs) <= 1) {
+    return(text)
+  }
+
+  # dbGetEvals() glues each question's "---question text\n" header onto the
+  # first paragraph of its answer (only paragraph breaks within the answer's
+  # own free text get a full blank line) - strip that header before
+  # comparing, purely for the comparison key, so a later bare re-quote of
+  # that first paragraph elsewhere still matches it
+  no_header <- sub("^---[^\n]*\n", "", paragraphs)
+
+  norm <- tolower(trimws(gsub(
+    "\\s+", " ",
+    gsub("[\"'‘’“”]", "", no_header)
+  )))
+
+  seen <- character(0)
+  keep <- rep(TRUE, length(paragraphs))
+  for (i in seq_along(paragraphs)) {
+    if (nchar(norm[i]) < min_chars) next
+    if (norm[i] %in% seen) {
+      keep[i] <- FALSE
+    } else {
+      seen <- c(seen, norm[i])
+    }
+  }
+
+  paste(paragraphs[keep], collapse = "\n\n")
+}
 
 #' Fetch review info and evaluation text for the extraction step
 #'
@@ -205,7 +367,10 @@ llm_comp_score <- function(
 #'
 #' @import dplyr
 #' @returns Data frame with columns review_id, evaluation_id, evaluation, prompt,
-#'   or NULL if there is nothing to process
+#'   or NULL if there is nothing to process. evaluation has verbatim-repeated
+#'   paragraphs collapsed via dedupe_repeated_paragraphs() before being sent
+#'   to the LLM (see its docs) - this is the prompt input only, not what's
+#'   stored/displayed elsewhere.
 db_fetch_review_extract <- function(conn, review_ids, force = FALSE) {
   review_info <- tbl(conn, "review_assignment") |>
     filter(id %in% local(review_ids)) |>
@@ -242,6 +407,7 @@ db_fetch_review_extract <- function(conn, review_ids, force = FALSE) {
 
   dbGetEvals(review_info$evaluation_id, conn) |>
     select(evaluation_id, evaluation) |>
+    mutate(evaluation = vapply(evaluation, dedupe_repeated_paragraphs, character(1))) |>
     left_join(review_info, by = "evaluation_id")
 }
 

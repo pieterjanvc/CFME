@@ -2,6 +2,15 @@
 # Primary functions for running the extraction and scoring pipeline.
 # Each step has a real-time (synchronous) variant and a batch variant.
 #
+# After a successful extraction write, dbCompExtractionCheckConflicts() checks
+# for rule-2 ("one competency per quote") violations. If any are found, the
+# review is left at statusCode 6 (Extraction conflict pending) instead of 3,
+# which also keeps it out of scoring (db_fetch_review_score() requires == 3).
+# llm_comp_resolve_run() (real-time only for now - no batch resolve step yet)
+# asks the LLM to pick a single winning competency per conflict and re-checks,
+# up to a capped number of attempts; if still unresolved it's left at -4
+# (Extraction conflict unresolved) for human review instead of looping forever.
+#
 # Typical pipeline (batch):
 #   batch <- llm_comp_extract_batch_submit(conn, review_ids)
 #   llm_batch_status(batch$id, conn)          # poll until statusCode == 3
@@ -12,6 +21,7 @@
 #
 # Typical pipeline (real-time):
 #   llm_comp_extract_run(conn, review_ids)
+#   llm_comp_resolve_run(conn, review_ids)    # only for reviews left at statusCode 6
 #   llm_comp_score_run(conn, review_ids)
 
 # ─── Real-time ────────────────────────────────────────────────────────────────
@@ -31,7 +41,9 @@
 #' @import dplyr
 #' @importFrom sqlife tbl_update
 #' @returns Data frame summarising results per review_id
-#'   (review_id, statusCode, tokens_in, tokens_out)
+#'   (review_id, statusCode, tokens_in, tokens_out). statusCode 6 means
+#'   extraction succeeded but dbCompExtractionCheckConflicts() found a rule-2
+#'   violation (see status_codes table).
 #' @export
 llm_comp_extract_run <- function(
   conn,
@@ -59,7 +71,11 @@ llm_comp_extract_run <- function(
 
     if (result$statusCode == 2 && length(result$data) > 0) {
       write_result <- dbCompExtraction(conn, rid, result$data, commit = FALSE)
-      if (!isTRUE(write_result$success)) new_status <- -2L
+      if (!isTRUE(write_result$success)) {
+        new_status <- -2L
+      } else if (isTRUE(dbCompExtractionCheckConflicts(conn, rid)$has_conflicts)) {
+        new_status <- 6L # Extraction conflict pending (rule-2 violation detected)
+      }
     }
 
     tbl_update(
@@ -76,6 +92,106 @@ llm_comp_extract_run <- function(
     data.frame(
       review_id = rid, statusCode = new_status,
       tokens_in = result$tokens_in, tokens_out = result$tokens_out
+    )
+  })
+
+  bind_rows(results)
+}
+
+#' Resolve rule-2 conflicts for a set of review assignments (real-time)
+#'
+#' For each review currently at statusCode 6 (Extraction conflict pending),
+#' builds a resolve prompt from its conflicting quotes (build_resolve_conflicts()),
+#' asks the LLM to pick one winning competency per conflict (or discard),
+#' applies the answer via dbCompConflictResolve(), and re-checks. Retries up
+#' to max_attempts times before giving up and marking the review -4
+#' (Extraction conflict unresolved) for human review. Review_assignment IDs
+#' not currently at statusCode 6 are skipped. No batch equivalent yet.
+#'
+#' @param conn DB connection
+#' @param review_ids Integer vector of review_assignment IDs to process
+#' @param model Azure deployment name. Default = "gpt-5.1"
+#' @param endpoint Azure endpoint base URL
+#' @param max_attempts Maximum resolve attempts per review before giving up. Default = 2
+#' @param verbose Print progress messages. Default = FALSE
+#'
+#' @import dplyr
+#' @importFrom sqlife tbl_update
+#' @returns Data frame summarising results per review_id (review_id,
+#'   statusCode, attempts, tokens_in, tokens_out), or NULL if none of the
+#'   given IDs are at statusCode 6
+#' @export
+llm_comp_resolve_run <- function(
+  conn,
+  review_ids,
+  model = "gpt-5.1",
+  endpoint = "https://azure-ai.hms.edu",
+  max_attempts = 2,
+  verbose = FALSE
+) {
+  review_info <- tbl(conn, "review_assignment") |>
+    filter(id %in% local(review_ids), statusCode == 6) |>
+    select(review_id = id, rubric_id) |>
+    collect()
+
+  if (nrow(review_info) == 0) {
+    warning(
+      "No review assignments at statusCode 6 (Extraction conflict pending) ",
+      "among the given IDs."
+    )
+    return(invisible(NULL))
+  }
+
+  results <- lapply(seq_len(nrow(review_info)), function(i) {
+    rid <- review_info$review_id[i]
+    rubric_id <- review_info$rubric_id[i]
+    if (verbose) message("Resolving review ", rid, "...")
+
+    prompt <- prompt_generate_resolve(conn, rubric_id)
+    tokens_in_total <- 0
+    tokens_out_total <- 0
+    attempt <- 0L
+    new_status <- 6L
+
+    repeat {
+      check <- dbCompExtractionCheckConflicts(conn, rid)
+      if (!isTRUE(check$has_conflicts)) {
+        new_status <- 3L
+        break
+      }
+      if (attempt >= max_attempts) {
+        new_status <- -4L
+        break
+      }
+      attempt <- attempt + 1L
+
+      comp <- prompt_build_competencies(conn, rubric_id)
+      built <- build_resolve_conflicts(check$conflicts, comp$comp_data)
+
+      result <- llm_comp_resolve(built$text, prompt, model = model, endpoint = endpoint)
+      if (!is.na(result$tokens_in)) tokens_in_total <- tokens_in_total + result$tokens_in
+      if (!is.na(result$tokens_out)) tokens_out_total <- tokens_out_total + result$tokens_out
+
+      if (result$statusCode != 2) next # API/parse failure - counts as a spent attempt, try again
+
+      dbCompConflictResolve(conn, built$clusters, result$data, commit = FALSE)
+    }
+
+    tbl_update(
+      data.frame(
+        id = rid,
+        statusCode = new_status,
+        note = sprintf("conflict_resolve_attempts:%d", attempt),
+        tokens_in = tokens_in_total,
+        tokens_out = tokens_out_total,
+        modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+      ),
+      conn, "review_assignment", returnData = FALSE, commit = TRUE
+    )
+
+    data.frame(
+      review_id = rid, statusCode = new_status, attempts = attempt,
+      tokens_in = tokens_in_total, tokens_out = tokens_out_total
     )
   })
 
@@ -274,6 +390,9 @@ llm_comp_score_batch_submit <- function(
 #'
 #' Fetches and parses the batch output, writes competency extraction data to
 #' the database via dbCompExtraction(), and updates review_assignment status codes.
+#' Reviews with a rule-2 conflict (see dbCompExtractionCheckConflicts()) are
+#' left at statusCode 6 (Extraction conflict pending) instead of 3, which
+#' also keeps them out of scoring.
 #'
 #' @param batch_id Internal batch ID (row id in the batch table)
 #' @param conn DB connection
@@ -307,7 +426,13 @@ batch_extract_process <- function(batch_id, conn) {
       extractions[[i]]$text <- unlist(extractions[[i]]$text)
     }
     result <- dbCompExtraction(conn, r$review_id, extractions, commit = FALSE)
-    if (isTRUE(result$success)) 3L else -2L
+    if (!isTRUE(result$success)) return(-2L)
+
+    if (isTRUE(dbCompExtractionCheckConflicts(conn, r$review_id)$has_conflicts)) {
+      6L # Extraction conflict pending (rule-2 violation detected)
+    } else {
+      3L
+    }
   })
 
   to_update <- lapply(results, "[", c("review_id", "tokens_in", "tokens_out")) |>

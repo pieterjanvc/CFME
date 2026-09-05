@@ -925,6 +925,249 @@ dbCompExtraction <- function(
   return(result)
 }
 
+#' Check a review's extracted competencies for rule-2 ("one competency per
+#' quote") violations
+#'
+#' Looks at the already-inserted competency_score/competency_text rows for
+#' one review_assignment_id (as written by dbCompExtraction()) and flags
+#' cases where the same underlying text ended up assigned to more than one
+#' competency: either two quotes from different competencies claim
+#' overlapping character ranges, or the same verbatim text_match string
+#' appears under two competencies but only one occurrence could be located
+#' in the source text (see mod_highlight_locate()), leaving the other with a
+#' NULL start/end that would otherwise go unnoticed.
+#'
+#' This is an exact-match check only - paraphrased duplicates that don't
+#' share a character range or an identical text_match string are not
+#' detected (deliberately out of scope for now; would need a similarity
+#' threshold calibrated against real examples).
+#'
+#' @param conn NARRATE database connection
+#' @param review_assignment_id Review assignment ID to check
+#'
+#' @import dplyr
+#'
+#' @returns A list with has_conflicts (T/F) and conflicts, a data frame (one
+#' row per conflicting pair) with columns conflict_type ("overlap" or
+#' "unlocated_duplicate"), competency_score_id_1/2, competency_text_id_1/2
+#' (the specific competency_text row on each side, for a resolution step to
+#' act on), competency_id_1/2, text_1/2 and start_1/2, end_1/2 (NA where
+#' mod_highlight_locate() couldn't place that occurrence)
+#' @export
+dbCompExtractionCheckConflicts <- function(conn, review_assignment_id) {
+  ra_id <- review_assignment_id
+
+  texts <- tbl(conn, "competency_score") |>
+    filter(review_assignment_id == local(ra_id)) |>
+    select(competency_score_id = id, competency_id) |>
+    inner_join(
+      tbl(conn, "competency_text") |>
+        select(competency_text_id = id, competency_score_id, text_match, start, end),
+      by = "competency_score_id"
+    ) |>
+    collect()
+
+  empty_conflicts <- data.frame(
+    conflict_type = character(0),
+    competency_score_id_1 = integer(0), competency_text_id_1 = integer(0),
+    competency_id_1 = integer(0), text_1 = character(0),
+    start_1 = integer(0), end_1 = integer(0),
+    competency_score_id_2 = integer(0), competency_text_id_2 = integer(0),
+    competency_id_2 = integer(0), text_2 = character(0),
+    start_2 = integer(0), end_2 = integer(0),
+    stringsAsFactors = FALSE
+  )
+
+  if (nrow(texts) < 2) {
+    return(list(has_conflicts = FALSE, conflicts = empty_conflicts))
+  }
+
+  conflicts <- list()
+  addConflict <- function(type, i, j) {
+    conflicts[[length(conflicts) + 1]] <<- data.frame(
+      conflict_type = type,
+      competency_score_id_1 = texts$competency_score_id[i],
+      competency_text_id_1 = texts$competency_text_id[i],
+      competency_id_1 = texts$competency_id[i],
+      text_1 = texts$text_match[i],
+      start_1 = texts$start[i],
+      end_1 = texts$end[i],
+      competency_score_id_2 = texts$competency_score_id[j],
+      competency_text_id_2 = texts$competency_text_id[j],
+      competency_id_2 = texts$competency_id[j],
+      text_2 = texts$text_match[j],
+      start_2 = texts$start[j],
+      end_2 = texts$end[j],
+      stringsAsFactors = FALSE
+    )
+  }
+
+  # (a) Range-overlap: quotes from different competencies claiming
+  # overlapping [start, end) character ranges
+  texts$orig_idx <- seq_len(nrow(texts))
+  located <- texts[!is.na(texts$start) & !is.na(texts$end), ]
+  located <- located[order(located$start), ]
+
+  if (nrow(located) > 1) {
+    for (i in seq_len(nrow(located) - 1)) {
+      for (j in seq(i + 1, nrow(located))) {
+        # Sorted by start - once a later quote starts after this one ends,
+        # no further quote can overlap it either
+        if (located$start[j] >= located$end[i]) break
+        if (located$competency_id[i] != located$competency_id[j]) {
+          addConflict("overlap", located$orig_idx[i], located$orig_idx[j])
+        }
+      }
+    }
+  }
+
+  # (b) Unlocated duplicates: identical (normalized) text_match under
+  # different competencies where at least one copy has no position, because
+  # mod_highlight_locate() could only claim one occurrence of it. Compared
+  # pairwise (i < j) rather than only starting from unlocated rows, since a
+  # located copy (which claimed the one available occurrence first) never
+  # gets its own turn as the starting point otherwise.
+  norm <- tolower(trimws(gsub("\\s+", " ", texts$text_match)))
+  n <- nrow(texts)
+
+  for (i in seq_len(n - 1)) {
+    for (j in seq(i + 1, n)) {
+      if (texts$competency_id[i] == texts$competency_id[j]) next
+      if (norm[i] != norm[j]) next
+      if (is.na(texts$start[i]) || is.na(texts$start[j])) {
+        addConflict("unlocated_duplicate", i, j)
+      }
+    }
+  }
+
+  conflicts <- if (length(conflicts) > 0) bind_rows(conflicts) else empty_conflicts
+  list(has_conflicts = nrow(conflicts) > 0, conflicts = conflicts)
+}
+
+#' Apply resolve-prompt decisions to conflicting competency_text rows
+#'
+#' Takes the cluster/option mapping from build_resolve_conflicts() and the
+#' model's parsed resolutions (llm_comp_resolve()$data) and applies them: for
+#' each conflictId, deletes the competency_text row(s) for every losing
+#' option (or all of them, if the model chose to discard the quote entirely
+#' via cIndex 0), keeping only the winning row. A competency_score row left
+#' with no competency_text children afterward is deleted too, since a
+#' competency with no supporting evidence shouldn't be scored.
+#'
+#' Unlike dbCompExtraction(), this only ever removes the specific
+#' competency_text rows identified by the conflict - it never touches quotes
+#' that weren't part of one.
+#'
+#' @param conn NARRATE database connection
+#' @param clusters Cluster/option data frame from build_resolve_conflicts()
+#'   (columns conflictId, competency_text_id, competency_score_id,
+#'   competency_id, comp_order)
+#' @param resolutions List as returned by llm_comp_resolve()$data - each
+#'   element has conflictId and cIndex (0 = discard)
+#' @param commit (Default = TRUE)
+#'
+#' @import dplyr
+#' @importFrom sqlife tbl_delete tbl_update
+#'
+#' @returns A list with resolved (integer vector of conflictIds successfully
+#'   applied) and unresolved (integer vector of conflictIds the model didn't
+#'   answer, or answered with a cIndex not among that conflict's options -
+#'   left untouched for a future retry)
+#' @export
+dbCompConflictResolve <- function(conn, clusters, resolutions, commit = TRUE) {
+  resolved <- integer(0)
+  unresolved <- integer(0)
+  to_delete_text <- integer(0)
+  affected_scores <- integer(0)
+  to_reposition <- list()
+
+  all_conflict_ids <- unique(clusters$conflictId)
+  chosen <- if (length(resolutions) > 0) {
+    setNames(
+      sapply(resolutions, "[[", "cIndex"),
+      sapply(resolutions, "[[", "conflictId")
+    )
+  } else {
+    setNames(numeric(0), character(0))
+  }
+
+  for (cid in all_conflict_ids) {
+    opts <- clusters[clusters$conflictId == cid, ]
+    cIndex <- chosen[as.character(cid)]
+
+    if (is.na(cIndex)) {
+      unresolved <- c(unresolved, cid) # model didn't answer this one
+      next
+    }
+
+    if (cIndex == 0) {
+      # Discard entirely - none of the options is correct
+      to_delete_text <- c(to_delete_text, opts$competency_text_id)
+      affected_scores <- c(affected_scores, opts$competency_score_id)
+      resolved <- c(resolved, cid)
+      next
+    }
+
+    winner <- opts[opts$comp_order == cIndex, ]
+    if (nrow(winner) == 0) {
+      unresolved <- c(unresolved, cid) # model picked an option not offered
+      next
+    }
+
+    losers <- opts[opts$comp_order != cIndex, ]
+
+    # The winning option may be the copy mod_highlight_locate() couldn't
+    # place (start/end NA) while a losing option for the same underlying
+    # quote does have a real position - transfer it onto the winner instead
+    # of deleting the only row that knows where the text actually is
+    if (is.na(winner$start[1])) {
+      positioned <- losers[!is.na(losers$start), ]
+      if (nrow(positioned) > 0) {
+        to_reposition[[length(to_reposition) + 1]] <- data.frame(
+          id = winner$competency_text_id[1],
+          start = positioned$start[1],
+          end = positioned$end[1]
+        )
+      }
+    }
+
+    to_delete_text <- c(to_delete_text, losers$competency_text_id)
+    affected_scores <- c(affected_scores, losers$competency_score_id)
+    resolved <- c(resolved, cid)
+  }
+
+  if (length(to_reposition) > 0) {
+    tbl_update(bind_rows(to_reposition), conn, "competency_text", commit = commit)
+  }
+
+  if (length(to_delete_text) > 0) {
+    tbl_delete(
+      data.frame(id = unique(to_delete_text)),
+      conn, "competency_text",
+      commit = commit
+    )
+  }
+
+  # Clean up competency_score rows left with no competency_text children -
+  # a competency with no remaining evidence shouldn't be scored
+  if (length(affected_scores) > 0) {
+    orphaned <- tbl(conn, "competency_score") |>
+      filter(id %in% local(unique(affected_scores))) |>
+      anti_join(
+        tbl(conn, "competency_text") |> select(id = competency_score_id),
+        by = "id"
+      ) |>
+      select(id) |>
+      collect()
+
+    if (nrow(orphaned) > 0) {
+      tbl_delete(orphaned, conn, "competency_score", commit = commit)
+    }
+  }
+
+  list(resolved = resolved, unresolved = unresolved)
+}
+
 #' Internal: filter a collected data frame to rows whose id is not already
 #' present in a target table
 #'
