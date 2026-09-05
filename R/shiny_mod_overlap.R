@@ -120,19 +120,27 @@ mod_overlap_ui_text <- function(id) {
       if (!table) return;
 
       var offset = 12;
+      var margin = 4;
       // The table is already `display: block` at this point (:hover is
-      // resolved before the mousemove handler runs), so offsetWidth
-      // reflects its real rendered size. Flip to the cursor's left when
-      // the default right-hand placement would run past the viewport
-      // edge, so the table doesn't get squeezed/clipped against the
-      // right side of the screen.
+      // resolved before the mousemove handler runs), so offsetWidth /
+      // offsetHeight reflect its real rendered size. Flip to the cursor's
+      // left when the default right-hand placement would run past the
+      // viewport edge, so the table doesn't get squeezed/clipped against
+      // the right side of the screen...
       var width = table.offsetWidth;
+      var height = table.offsetHeight;
       var left = width && e.clientX + offset + width > window.innerWidth
         ? e.clientX - offset - width
         : e.clientX + offset;
+      // ...then clamp both axes into the viewport so the flipped-left
+      // placement (or a wide table near the left edge) can't clip off the
+      // left, and a tall table near the bottom can't clip off the bottom.
+      left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
+      var top = e.clientY + offset;
+      top = Math.max(margin, Math.min(top, window.innerHeight - height - margin));
 
       table.style.left = left + 'px';
-      table.style.top = (e.clientY + offset) + 'px';
+      table.style.top = top + 'px';
     });
   })();
   ",
