@@ -20,7 +20,6 @@ Suggests:
   rsconnect
 Imports:
   bslib,
-  callr,
   dplyr,
   DT,
   ggplot2,
@@ -31,6 +30,7 @@ Imports:
   keyring,
   pins,
   pkgload,
+  processx,
   readxl,
   rlang,
   RSQLite,
