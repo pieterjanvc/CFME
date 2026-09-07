@@ -452,7 +452,53 @@ pin_dev_set <- function(
   return(newPin)
 }
 
-#' Monitor a batch job and send a PushOver notification when complete
+#' Backup the local DB and replace it with the latest online export
+#'
+#' Copies the current local database to
+#' \code{<backupDir>/narrate-<today>.db} (e.g. \code{local/backup/narrate-2026-09-07.db}),
+#' then downloads the latest exported database from the pin and writes it to
+#' \code{dbPath}.
+#'
+#' @param dbPath (Default = "local/narrate.db") Path to the local database
+#' @param exportPin (Default = "narrate_db_export") Pin holding the exported DB
+#' @param backupDir (Default = "local/backup") Directory for the dated backup
+#'
+#' @import pins
+#'
+#' @returns (invisibly) list with the backup path and the refreshed db path
+#' @export
+#'
+fetch_online_db <- function(
+  dbPath = "local/narrate.db",
+  exportPin = "narrate_db_export",
+  backupDir = "local/backup"
+) {
+  if (!file.exists(dbPath)) {
+    stop("Local database not found at ", dbPath)
+  }
+
+  # Back up the current local DB before it gets overwritten
+  dir.create(backupDir, showWarnings = F, recursive = T)
+  backupPath <- file.path(
+    backupDir,
+    sprintf("narrate-%s.db", format(Sys.Date(), "%Y-%m-%d"))
+  )
+  file.copy(dbPath, backupPath, overwrite = T)
+  print(paste("Local database backed up to", backupPath))
+
+  # Pull the latest export down and set it as the new local DB
+  pin_dev_get(exportPin, dbPath, tempBackup = F)
+  print(paste("Latest online export written to", dbPath))
+
+  invisible(list(backup = backupPath, db = dbPath))
+}
+
+#' Monitor a batch job and send a PushOver notification when it settles
+#'
+#' Polls llm_batch_status() in a background process and notifies once the
+#' batch completes (statusCode 3), fails/expires/cancels (statusCode < 0), or
+#' the max_wait is reached. Content-agnostic - works for any batch step
+#' (extract, resolve, score).
 #'
 #' @param batch_id ID of the batch to monitor
 #' @param db_path Path to the SQLite database
@@ -510,6 +556,23 @@ batch_status_notify <- function(
                   token = auth$key,
                   user = auth$user,
                   message = paste("LLM batch", batch_id, "finished")
+                ) |>
+                httr2::req_perform()
+
+              break
+            }
+
+            # Failed / expired / cancelled - notify now rather than waiting
+            # out max_wait
+            if (batch_info$statusCode < 0) {
+              httr2::request(auth$url) |>
+                httr2::req_body_form(
+                  token = auth$key,
+                  user = auth$user,
+                  message = paste(
+                    "LLM batch", batch_id,
+                    "did not complete (statusCode", batch_info$statusCode, ")"
+                  )
                 ) |>
                 httr2::req_perform()
 

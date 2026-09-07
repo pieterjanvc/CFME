@@ -13,7 +13,7 @@ mod_overlap_ui_text(id)
 Shiny UI element
 }
 \description{
-Contains only a \code{\link[shiny:htmlOutput]{shiny::uiOutput()}} that the paired \code{\link[=mod_overlap_server]{mod_overlap_server()}}
+Contains only a \code{\link[shiny:uiOutput]{uiOutput()}} that the paired \code{\link[=mod_overlap_server]{mod_overlap_server()}}
 renders the source text into, with highlight \verb{<span>}s injected around
 every region covered by at least one (post-filter) highlight. Overlapping
 coverage from multiple distinct users is shown as a single merged span

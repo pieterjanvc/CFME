@@ -458,6 +458,71 @@ db_fetch_review_score <- function(conn, review_ids, force = FALSE) {
   select(review_info, -statusCode)
 }
 
+#' Fetch review info and current conflicts for the resolve step
+#'
+#' Joins review_assignment with rubric_id and, for each review, re-runs
+#' dbCompExtractionCheckConflicts() to get its current rule-2 conflicts.
+#' Filters to statusCode == 6 (Extraction conflict pending) unless force = TRUE.
+#' Used by llm_comp_resolve_batch_submit() (the live path keeps this logic
+#' inline in llm_comp_resolve_run()).
+#'
+#' The conflict check is a per-review DB read (no LLM call), so a plain
+#' lapply() over review_ids is fine here rather than a single set-based query.
+#'
+#' @param conn DB connection
+#' @param review_ids Integer vector of review_assignment IDs
+#' @param force Skip statusCode filter. Default = FALSE
+#'
+#' @import dplyr
+#' @returns Data frame with one row per review: review_id, rubric_id, and a
+#'   list-column `conflicts` (the data frame from
+#'   dbCompExtractionCheckConflicts()$conflicts). Reviews with no current
+#'   conflicts are dropped. NULL if there is nothing to process.
+db_fetch_review_resolve <- function(conn, review_ids, force = FALSE) {
+  review_info <- tbl(conn, "review_assignment") |>
+    filter(id %in% local(review_ids)) |>
+    select(review_id = id, statusCode, rubric_id) |>
+    collect()
+
+  if (!force) {
+    if (nrow(filter(review_info, statusCode == 6)) == 0) {
+      warning(
+        "No review assignments with a pending extraction conflict ",
+        "(statusCode == 6). Use force = TRUE to reprocess."
+      )
+      return(NULL)
+    }
+    not_pending <- review_info$review_id[review_info$statusCode != 6]
+    if (length(not_pending) > 0) {
+      warning(
+        length(not_pending), " review_assignment(s) skipped (statusCode != 6): ",
+        paste(not_pending, collapse = ", ")
+      )
+      review_info <- filter(review_info, statusCode == 6)
+    }
+  }
+
+  review_info <- select(review_info, -statusCode)
+
+  review_info$conflicts <- lapply(
+    review_info$review_id,
+    function(rid) dbCompExtractionCheckConflicts(conn, rid)$conflicts
+  )
+
+  has_conflicts <- vapply(review_info$conflicts, function(x) nrow(x) > 0, logical(1))
+  if (any(!has_conflicts)) {
+    warning(
+      sum(!has_conflicts), " review_assignment(s) skipped (no current conflicts): ",
+      paste(review_info$review_id[!has_conflicts], collapse = ", ")
+    )
+    review_info <- review_info[has_conflicts, , drop = FALSE]
+  }
+
+  if (nrow(review_info) == 0) return(NULL)
+
+  review_info
+}
+
 #' Fetch extracted competency texts for a set of review assignments
 #'
 #' Also joins rubric_competency to include comp_order (the cIndex position used

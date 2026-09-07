@@ -6,15 +6,23 @@
 # for rule-2 ("one competency per quote") violations. If any are found, the
 # review is left at statusCode 6 (Extraction conflict pending) instead of 3,
 # which also keeps it out of scoring (db_fetch_review_score() requires == 3).
-# llm_comp_resolve_run() (real-time only for now - no batch resolve step yet)
-# asks the LLM to pick a single winning competency per conflict and re-checks,
-# up to a capped number of attempts; if still unresolved it's left at -4
-# (Extraction conflict unresolved) for human review instead of looping forever.
+# The resolve step (llm_comp_resolve_run() live, or
+# llm_comp_resolve_batch_submit() + batch_resolve_process() batch) asks the
+# LLM to pick a single winning competency per conflict and re-checks, up to a
+# capped number of attempts; if still unresolved it's left at -4 (Extraction
+# conflict unresolved) for human review instead of looping forever. The batch
+# path holds submitted reviews at statusCode 7 and persists the attempt count
+# in review_assignment.note between rounds.
 #
 # Typical pipeline (batch):
 #   batch <- llm_comp_extract_batch_submit(conn, review_ids)
 #   llm_batch_status(batch$id, conn)          # poll until statusCode == 3
 #   batch_extract_process(batch$id, conn)
+#   # for any review left at statusCode 6 (Extraction conflict pending),
+#   # repeat submit + process until it clears (3) or is exhausted (-4):
+#   batch <- llm_comp_resolve_batch_submit(conn, review_ids)
+#   llm_batch_status(batch$id, conn)
+#   batch_resolve_process(batch$id, conn)
 #   batch <- llm_comp_score_batch_submit(conn, review_ids)
 #   llm_batch_status(batch$id, conn)
 #   batch_score_process(batch$id, conn)
@@ -384,6 +392,70 @@ llm_comp_score_batch_submit <- function(
   db_record_batch(conn, file_input_id, batch_id, review_info$review_id, review_status = 4L)
 }
 
+#' Submit a batch rule-2 conflict-resolution job
+#'
+#' Batch equivalent of llm_comp_resolve_run(), for when conflict volume is too
+#' high to resolve one-by-one in real time. For each review currently at
+#' statusCode 6 (Extraction conflict pending), builds a resolve request from
+#' its current conflicts (dbCompExtractionCheckConflicts() +
+#' build_resolve_conflicts()) and the per-rubric resolve prompt
+#' (prompt_generate_resolve()), uploads them as one batch, and records it.
+#' Submitted reviews move to statusCode 7 (Conflict resolve batch submitted);
+#' batch_resolve_process() applies the results.
+#'
+#' @param conn DB connection
+#' @param review_ids Integer vector of review_assignment IDs to process
+#' @param model Azure batch deployment name. Default = "gpt-5.1-batch"
+#' @param endpoint Azure endpoint base URL
+#' @param api_key API key. Default = HMS_AZURE_API env var
+#' @param verbose Print progress messages. Default = FALSE
+#' @param force Resubmit even if not at statusCode 6. Default = FALSE
+#'
+#' @returns Inserted batch record data frame
+#' @export
+llm_comp_resolve_batch_submit <- function(
+  conn,
+  review_ids,
+  model = "gpt-5.1-batch",
+  endpoint = "https://azure-ai.hms.edu",
+  api_key = Sys.getenv("HMS_AZURE_API"),
+  verbose = FALSE,
+  force = FALSE
+) {
+  review_info <- db_fetch_review_resolve(conn, review_ids, force)
+  if (is.null(review_info)) return(invisible(NULL))
+
+  # Per-rubric resolve prompt and competency data are the same for every
+  # review sharing a rubric, so build them once per rubric_id.
+  prompt_cache <- list()
+  comp_cache <- list()
+
+  requests <- setNames(
+    lapply(seq_len(nrow(review_info)), function(i) {
+      rubric_id <- review_info$rubric_id[i]
+      rubric_key <- as.character(rubric_id)
+      if (is.null(prompt_cache[[rubric_key]])) {
+        prompt_cache[[rubric_key]] <<- prompt_generate_resolve(conn, rubric_id)
+        comp_cache[[rubric_key]] <<- prompt_build_competencies(conn, rubric_id)$comp_data
+      }
+
+      built <- build_resolve_conflicts(review_info$conflicts[[i]], comp_cache[[rubric_key]])
+      llm_build_resolve_body(built$text, prompt_cache[[rubric_key]])
+    }),
+    paste0("review-", review_info$review_id)
+  )
+
+  if (verbose) message("Uploading ", length(requests), " requests...")
+  file_input_id <- llm_batch_upload(
+    llm_batch_build_jsonl(requests, model), endpoint, api_key
+  )
+
+  if (verbose) message("Creating batch job...")
+  batch_id <- llm_batch_create(file_input_id, endpoint, api_key)
+
+  db_record_batch(conn, file_input_id, batch_id, review_info$review_id, review_status = 7L)
+}
+
 # ─── Batch process ────────────────────────────────────────────────────────────
 
 #' Process completed batch extraction results
@@ -442,6 +514,109 @@ batch_extract_process <- function(batch_id, conn) {
       modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
     ) |>
     rename(id = review_id)
+
+  tbl_update(to_update, conn, "review_assignment", returnData = FALSE, commit = FALSE)
+
+  tbl_update(
+    data.frame(
+      id = batch_id, statusCode = 4L,
+      tokens_in = sum(to_update$tokens_in, na.rm = TRUE),
+      tokens_out = sum(to_update$tokens_out, na.rm = TRUE)
+    ),
+    conn, "batch"
+  )
+}
+
+#' Process completed batch conflict-resolution results
+#'
+#' Batch equivalent of the apply/re-check loop inside llm_comp_resolve_run().
+#' Fetches and parses the batch output, and for each review re-derives its
+#' current conflict clusters (dbCompExtractionCheckConflicts() +
+#' build_resolve_conflicts(), deterministic for the same conflicts), applies
+#' the model's decisions via dbCompConflictResolve(), and re-checks. The
+#' retry count persists in review_assignment.note
+#' ("conflict_resolve_attempts:N") between rounds, since the batch path is
+#' multi-step (submit -> poll -> process) rather than a single in-memory loop.
+#'
+#' Per review, the resulting statusCode is:
+#'   - 3  if no conflicts remain
+#'   - 6  if conflicts remain and attempts are still under max_attempts
+#'        (eligible for another llm_comp_resolve_batch_submit() round)
+#'   - -4 if conflicts remain and attempts are exhausted (needs human review)
+#' A failed or unparseable result still counts as a spent attempt, matching
+#' the live path.
+#'
+#' @param batch_id Internal batch ID (row id in the batch table)
+#' @param conn DB connection
+#' @param max_attempts Resolve rounds allowed before giving up. Default = 2
+#'   (matches llm_comp_resolve_run())
+#'
+#' @import dplyr
+#' @importFrom sqlife tbl_update
+#' @returns Updated batch info data frame
+#' @export
+batch_resolve_process <- function(batch_id, conn, max_attempts = 2) {
+  batch_info <- llm_batch_status(batch_id, conn)
+
+  if (batch_info$statusCode != 3) {
+    message("No results to process")
+    return(batch_info)
+  }
+
+  results <- batch_results_preprocess(batch_info$file_output_id)
+  review_ids <- sapply(results, "[[", "review_id")
+
+  meta <- tbl(conn, "review_assignment") |>
+    filter(id %in% local(review_ids)) |>
+    select(review_id = id, rubric_id, note) |>
+    collect()
+
+  # comp_data is the same for every review sharing a rubric - build once each
+  comp_cache <- list()
+  comp_data_for <- function(rubric_id) {
+    key <- as.character(rubric_id)
+    if (is.null(comp_cache[[key]])) {
+      comp_cache[[key]] <<- prompt_build_competencies(conn, rubric_id)$comp_data
+    }
+    comp_cache[[key]]
+  }
+
+  parse_attempts <- function(note) {
+    m <- regmatches(note, regexpr("conflict_resolve_attempts:\\d+", note))
+    if (length(m) == 0 || is.na(note)) return(0L)
+    as.integer(sub(".*:", "", m))
+  }
+
+  to_update <- lapply(results, function(r) {
+    rid <- r$review_id
+    row <- meta[meta$review_id == rid, ]
+    attempts <- parse_attempts(row$note) + 1L # this round counts, pass or fail
+
+    if (r$statusCode == 2) {
+      check <- dbCompExtractionCheckConflicts(conn, rid)
+      if (isTRUE(check$has_conflicts)) {
+        built <- build_resolve_conflicts(check$conflicts, comp_data_for(row$rubric_id))
+        # r$data is the full parsed object; resolutions is NULL if the model
+        # omitted the key, which dbCompConflictResolve() treats as "none
+        # answered" - a spent attempt, same as a parse failure
+        dbCompConflictResolve(conn, built$clusters, r$data$resolutions, commit = FALSE)
+      }
+    }
+
+    remaining <- isTRUE(dbCompExtractionCheckConflicts(conn, rid)$has_conflicts)
+    new_status <- if (!remaining) 3L else if (attempts >= max_attempts) -4L else 6L
+
+    data.frame(
+      id = rid,
+      statusCode = new_status,
+      note = sprintf("conflict_resolve_attempts:%d", attempts),
+      tokens_in = r$tokens_in,
+      tokens_out = r$tokens_out,
+      modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+      stringsAsFactors = FALSE
+    )
+  }) |>
+    bind_rows()
 
   tbl_update(to_update, conn, "review_assignment", returnData = FALSE, commit = FALSE)
 

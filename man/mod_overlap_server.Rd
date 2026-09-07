@@ -41,7 +41,7 @@ argument. \code{NULL}/\code{""} renders as empty output}
 }
 \value{
 No return value; the module renders directly into its own
-\code{\link[shiny:htmlOutput]{shiny::uiOutput()}} (this is a read-only summary view, not an input module)
+\code{\link[shiny:uiOutput]{uiOutput()}} (this is a read-only summary view, not an input module)
 }
 \description{
 Module server for the overlap summary display

@@ -60,8 +60,32 @@ llm_batch_status(batch_extract$id, conn) # poll until statusCode == 3
 batch_status_notify(batch_extract$id, db_path)
 batch_extract_process(batch_extract$id, conn)
 
+# STEP 1b — Resolve rule-2 extraction conflicts
+# **********************************************
+# batch_extract_process() parks any review with a rule-2 ("one competency per
+# quote") conflict at statusCode 6 instead of 3, which also keeps it out of
+# scoring. A review can need more than one resolve round: it drops back to 6
+# if conflicts remain and attempts aren't exhausted, or lands at -4 once they
+# are. Re-run this block until no reviews are left at statusCode 6.
+review_ids_conflict <- tbl(conn, "review_assignment") |>
+  filter(reviewer_id == 1, statusCode == 6) |>
+  pull(id)
+
+# Real-time:
+# test <- llm_comp_resolve_run(conn, review_ids_conflict, verbose = T)
+
+# Batch:
+if (length(review_ids_conflict) > 0) {
+  batch_resolve <- llm_comp_resolve_batch_submit(conn, review_ids_conflict)
+  llm_batch_status(batch_resolve$id, conn) # poll until statusCode == 3
+  batch_status_notify(batch_resolve$id, db_path)
+  batch_resolve_process(batch_resolve$id, conn)
+}
+
 # STEP 2 — Competency scoring
 # *****************************
+# statusCode 3 = extraction complete and conflict-free (either no conflict was
+# found or the resolve step cleared it)
 review_ids_ready <- tbl(conn, "review_assignment") |>
   filter(reviewer_id == 1, statusCode == 3) |>
   pull(id)

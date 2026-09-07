@@ -288,6 +288,7 @@ INSERT INTO "status_codes" ("table", "code", "description", "note") VALUES
   ('review_assignment',  4, 'Batch scoring submitted',    NULL),
   ('review_assignment',  5, 'Batch scoring complete',     NULL),
   ('review_assignment',  6, 'Extraction conflict pending', 'Rule-2 ("one competency per quote") violation detected by dbCompExtractionCheckConflicts(); needs resolution'),
+  ('review_assignment',  7, 'Conflict resolve batch submitted', 'Rule-2 conflict resolution submitted to batch (see llm_comp_resolve_batch_submit()); batch_resolve_process() moves it to 3, back to 6 for another round, or -4 if attempts exhausted'),
   -- batch
   ('batch', -3, 'Cancelled',   NULL),
   ('batch', -2, 'Expired',     NULL),
