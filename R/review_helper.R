@@ -14,7 +14,10 @@ llm_build_extract_body <- function(evaluation_text, prompt) {
     instructions = prompt,
     input = paste0(evaluation_text, "\n\nRespond with JSON as instructed."),
     text = list(format = list(type = "json_object")),
-    max_output_tokens = 10000L
+    # Real extraction output tops out around 1.2k tokens (p99 over ~750 reviews);
+    # 2500 leaves 2x headroom while failing a runaway repetition loop fast
+    # instead of burning to a 10k ceiling.
+    max_output_tokens = 2500L
   )
 }
 
@@ -622,12 +625,28 @@ db_write_score_specificity <- function(conn, rid, competencies, commit = FALSE) 
 
   updates <- data.frame(
     comp_order  = sapply(competencies, "[[", "cIndex"),
-    specificity = sapply(competencies, "[[", "specificity"),
+    specificity = sapply(competencies, function(x) x[["specificity"]] %||% NA_integer_),
     stringsAsFactors = FALSE
   ) |>
     left_join(order_map, by = "comp_order") |>
     left_join(existing |> select(id, competency_id), by = "competency_id") |>
     select(id, specificity)
+
+  # The scoring model sometimes returns a specificity for a competency that
+  # wasn't in the extraction set (an out-of-range cIndex, or one it invented) -
+  # there's no competency_score row to update, so drop it rather than let
+  # tbl_update choke on a NULL / duplicated primary key. Also drop rows with no
+  # usable specificity, and collapse any competency scored more than once.
+  dropped <- sum(is.na(updates$id) | is.na(updates$specificity))
+  updates <- updates |>
+    filter(!is.na(id), !is.na(specificity)) |>
+    distinct(id, .keep_all = TRUE)
+  if (dropped > 0) {
+    warning(sprintf(
+      "db_write_score_specificity(): review %s - dropped %d unmatched/empty specificity score(s)",
+      rid, dropped
+    ))
+  }
 
   if (nrow(updates) > 0) {
     tbl_update(updates, conn, "competency_score", returnData = FALSE, commit = commit)
