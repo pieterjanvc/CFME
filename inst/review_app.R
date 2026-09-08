@@ -244,10 +244,14 @@ ui <- page_fluid(
       card(
         card_header("Select Evaluation"),
         div(DTOutput("assignment_eval_table")),
-        checkboxInput(
-          "includeOtherRubric",
-          "Include previously reviewed with different rubric",
-          value = FALSE,
+        selectInput(
+          "hideHumanRubrics",
+          paste(
+            "Hide evals already assigned to a human reviewer under",
+            "rubric version(s):"
+          ),
+          choices = c(),
+          multiple = TRUE,
           width = "auto"
         ),
         actionButton("assignToAll", "Assign to all")
@@ -2227,10 +2231,21 @@ server <- function(input, output, session) {
   })
   #### ASSIGNMENT TAB ####
 
-  # Reactive: evaluations eligible to assign, respecting the checkbox filter.
-  # Always excluded: any eval already assigned with the latest rubric.
-  # Unchecked: also exclude evals that have any assignment (any rubric).
-  # Checked:   include evals assigned only under a different rubric.
+  # Populate the rubric-version multi-select used to hide already-assigned evals.
+  local({
+    rubrics_df <- loadRubrics()
+    updateSelectInput(
+      session,
+      "hideHumanRubrics",
+      choices = setNames(rubrics_df$id, rubrics_df$label)
+    )
+  })
+
+  # Reactive: evaluations eligible to assign. By default every evaluation is
+  # listed, regardless of who (human or AI) has already reviewed it. Selecting
+  # one or more rubric versions in `hideHumanRubrics` hides evals that already
+  # have a *human* review assignment under any of those rubric versions; AI
+  # assignments never hide an eval.
   assignment_eval_choices <- reactive({
     all_evals <- tbl(conn, "evaluation") |>
       left_join(tbl(conn, "rotation"), by = c("rotation_id" = "id")) |>
@@ -2253,19 +2268,23 @@ server <- function(input, output, session) {
       mutate(original_evaluator_id = as.character(original_evaluator_id)) |>
       arrange(id)
 
-    latest_assigned <- tbl(conn, "review_assignment") |>
-      filter(rubric_id == local(latest_rubric_id)) |>
+    hide_rubrics <- as.integer(input$hideHumanRubrics)
+    if (length(hide_rubrics) == 0) {
+      return(all_evals)
+    }
+
+    human_assigned <- tbl(conn, "review_assignment") |>
+      filter(rubric_id %in% local(hide_rubrics)) |>
+      inner_join(
+        tbl(conn, "reviewer") |>
+          filter(human == 1) |>
+          select(reviewer_id = id),
+        by = "reviewer_id"
+      ) |>
       pull(evaluation_id) |>
       unique()
 
-    if (isTRUE(input$includeOtherRubric)) {
-      all_evals |> filter(!id %in% latest_assigned)
-    } else {
-      any_assigned <- tbl(conn, "review_assignment") |>
-        pull(evaluation_id) |>
-        unique()
-      all_evals |> filter(!id %in% any_assigned)
-    }
+    all_evals |> filter(!id %in% human_assigned)
   })
 
   output$assignment_eval_table <- renderDT({
