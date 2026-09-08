@@ -7,7 +7,8 @@
 llm_build_resolve_body(conflicts_text, prompt)
 }
 \arguments{
-\item{conflicts_text}{Formatted CONFLICTS section text (build_resolve_conflicts()$text)}
+\item{conflicts_text}{Formatted prompt body from build_resolve_conflicts()$text
+(already includes its own section headers)}
 
 \item{prompt}{System prompt (resolve instructions, from prompt_generate_resolve())}
 }

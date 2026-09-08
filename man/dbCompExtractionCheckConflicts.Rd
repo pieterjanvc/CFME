@@ -14,25 +14,34 @@ dbCompExtractionCheckConflicts(conn, review_assignment_id)
 }
 \value{
 A list with has_conflicts (T/F) and conflicts, a data frame (one
-row per conflicting pair) with columns conflict_type ("overlap" or
-"unlocated_duplicate"), competency_score_id_1/2, competency_text_id_1/2
-(the specific competency_text row on each side, for a resolution step to
-act on), competency_id_1/2, text_1/2 and start_1/2, end_1/2 (NA where
-mod_highlight_locate() couldn't place that occurrence)
+row per conflicting pair) with columns conflict_type ("overlap",
+"unlocated_duplicate" or "substring_duplicate"), competency_score_id_1/2,
+competency_text_id_1/2 (the specific competency_text row on each side, for
+a resolution step to act on), competency_id_1/2, text_1/2 and start_1/2,
+end_1/2 (NA where mod_highlight_locate() couldn't place that occurrence)
 }
 \description{
 Looks at the already-inserted competency_score/competency_text rows for
 one review_assignment_id (as written by dbCompExtraction()) and flags
 cases where the same underlying text ended up assigned to more than one
-competency: either two quotes from different competencies claim
-overlapping character ranges, or the same verbatim text_match string
-appears under two competencies but only one occurrence could be located
-in the source text (see mod_highlight_locate()), leaving the other with a
-NULL start/end that would otherwise go unnoticed.
+competency. Three shapes are detected:
+\itemize{
+\item "overlap": two quotes from different competencies that both have a
+located character range and those ranges overlap.
+\item "unlocated_duplicate": the same verbatim text_match string under two
+competencies where at least one copy could not be located (see
+mod_highlight_locate()), leaving it with a NULL start/end.
+\item "substring_duplicate": one competency's quote is a verbatim substring
+of another competency's quote (not byte-identical - that's the case
+above) and at least one of the pair is unlocated. This is the common
+shape mod_highlight_locate() hides: the model quoted a sentence for
+one competency and a longer passage containing it for another, so the
+nested copy got start/end NA because the containing copy already
+claimed that span - invisible to both checks above.
+}
 }
 \details{
-This is an exact-match check only - paraphrased duplicates that don't
-share a character range or an identical text_match string are not
-detected (deliberately out of scope for now; would need a similarity
+Paraphrased duplicates that share neither a character range nor a
+verbatim substring are still out of scope (would need a similarity
 threshold calibrated against real examples).
 }

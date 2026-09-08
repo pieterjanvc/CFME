@@ -5,7 +5,7 @@
 \title{Build the CONFLICTS section text (and applicable cluster/option mapping)
 for the resolve prompt}
 \usage{
-build_resolve_conflicts(conflicts, comp_data)
+build_resolve_conflicts(conflicts, comp_data, conn = NULL)
 }
 \arguments{
 \item{conflicts}{The conflicts data frame from
@@ -13,12 +13,15 @@ dbCompExtractionCheckConflicts()}
 
 \item{comp_data}{Data frame with competency_id, comp_order, name (as
 returned by prompt_build_competencies()$comp_data)}
+
+\item{conn}{(Optional) NARRATE database connection. When given, the full
+current extraction set for the review is included as read-only context.}
 }
 \value{
-List with text (the formatted CONFLICTS section, "" if no
-conflicts) and clusters, a data frame (one row per option per
-conflictId) with columns conflictId, competency_text_id,
-competency_score_id, competency_id, comp_order, text, start, end
+List with text (the formatted prompt body, "" if no conflicts)
+and clusters, a data frame (one row per option per conflictId) with
+columns conflictId, competency_text_id, competency_score_id,
+competency_id, comp_order, text, start, end
 }
 \description{
 Conflicts from dbCompExtractionCheckConflicts() are pairwise (one row per
@@ -28,4 +31,13 @@ A, B and C shows up as pairs A-B, A-C and B-C). Resolving those
 independently could give contradictory answers (A-B picks B, but A-C picks
 A), so this groups pairwise conflicts into connected clusters first and
 asks the model to make one decision per cluster among all of its options.
+}
+\details{
+Each conflict lists every competing quote with its own verbatim text (the
+quotes are no longer assumed byte-identical - a "substring_duplicate"
+conflict has genuinely different text on each side). When \code{conn} is
+supplied, a \verb{# CURRENT EXTRACTIONS} block is prepended listing every quote
+currently extracted for the review, grouped by competency, so the model
+can judge each decision against the whole picture (e.g. leave a contested
+quote with the competency that would otherwise have no evidence).
 }

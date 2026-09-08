@@ -174,7 +174,7 @@ llm_comp_resolve_run <- function(
       attempt <- attempt + 1L
 
       comp <- prompt_build_competencies(conn, rubric_id)
-      built <- build_resolve_conflicts(check$conflicts, comp$comp_data)
+      built <- build_resolve_conflicts(check$conflicts, comp$comp_data, conn)
 
       result <- llm_comp_resolve(built$text, prompt, model = model, endpoint = endpoint)
       if (!is.na(result$tokens_in)) tokens_in_total <- tokens_in_total + result$tokens_in
@@ -439,7 +439,9 @@ llm_comp_resolve_batch_submit <- function(
         comp_cache[[rubric_key]] <<- prompt_build_competencies(conn, rubric_id)$comp_data
       }
 
-      built <- build_resolve_conflicts(review_info$conflicts[[i]], comp_cache[[rubric_key]])
+      built <- build_resolve_conflicts(
+        review_info$conflicts[[i]], comp_cache[[rubric_key]], conn
+      )
       llm_build_resolve_body(built$text, prompt_cache[[rubric_key]])
     }),
     paste0("review-", review_info$review_id)
@@ -595,7 +597,9 @@ batch_resolve_process <- function(batch_id, conn, max_attempts = 2) {
     if (r$statusCode == 2) {
       check <- dbCompExtractionCheckConflicts(conn, rid)
       if (isTRUE(check$has_conflicts)) {
-        built <- build_resolve_conflicts(check$conflicts, comp_data_for(row$rubric_id))
+        built <- build_resolve_conflicts(
+          check$conflicts, comp_data_for(row$rubric_id), conn
+        )
         # r$data is the full parsed object; resolutions is NULL if the model
         # omitted the key, which dbCompConflictResolve() treats as "none
         # answered" - a spent attempt, same as a parse failure

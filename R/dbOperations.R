@@ -931,15 +931,22 @@ dbCompExtraction <- function(
 #' Looks at the already-inserted competency_score/competency_text rows for
 #' one review_assignment_id (as written by dbCompExtraction()) and flags
 #' cases where the same underlying text ended up assigned to more than one
-#' competency: either two quotes from different competencies claim
-#' overlapping character ranges, or the same verbatim text_match string
-#' appears under two competencies but only one occurrence could be located
-#' in the source text (see mod_highlight_locate()), leaving the other with a
-#' NULL start/end that would otherwise go unnoticed.
+#' competency. Three shapes are detected:
+#'   - "overlap": two quotes from different competencies that both have a
+#'     located character range and those ranges overlap.
+#'   - "unlocated_duplicate": the same verbatim text_match string under two
+#'     competencies where at least one copy could not be located (see
+#'     mod_highlight_locate()), leaving it with a NULL start/end.
+#'   - "substring_duplicate": one competency's quote is a verbatim substring
+#'     of another competency's quote (not byte-identical - that's the case
+#'     above) and at least one of the pair is unlocated. This is the common
+#'     shape mod_highlight_locate() hides: the model quoted a sentence for
+#'     one competency and a longer passage containing it for another, so the
+#'     nested copy got start/end NA because the containing copy already
+#'     claimed that span - invisible to both checks above.
 #'
-#' This is an exact-match check only - paraphrased duplicates that don't
-#' share a character range or an identical text_match string are not
-#' detected (deliberately out of scope for now; would need a similarity
+#' Paraphrased duplicates that share neither a character range nor a
+#' verbatim substring are still out of scope (would need a similarity
 #' threshold calibrated against real examples).
 #'
 #' @param conn NARRATE database connection
@@ -948,11 +955,11 @@ dbCompExtraction <- function(
 #' @import dplyr
 #'
 #' @returns A list with has_conflicts (T/F) and conflicts, a data frame (one
-#' row per conflicting pair) with columns conflict_type ("overlap" or
-#' "unlocated_duplicate"), competency_score_id_1/2, competency_text_id_1/2
-#' (the specific competency_text row on each side, for a resolution step to
-#' act on), competency_id_1/2, text_1/2 and start_1/2, end_1/2 (NA where
-#' mod_highlight_locate() couldn't place that occurrence)
+#' row per conflicting pair) with columns conflict_type ("overlap",
+#' "unlocated_duplicate" or "substring_duplicate"), competency_score_id_1/2,
+#' competency_text_id_1/2 (the specific competency_text row on each side, for
+#' a resolution step to act on), competency_id_1/2, text_1/2 and start_1/2,
+#' end_1/2 (NA where mod_highlight_locate() couldn't place that occurrence)
 #' @export
 dbCompExtractionCheckConflicts <- function(conn, review_assignment_id) {
   ra_id <- review_assignment_id
@@ -1040,34 +1047,135 @@ dbCompExtractionCheckConflicts <- function(conn, review_assignment_id) {
     }
   }
 
+  # (c) Substring duplicates: one quote is a verbatim substring of another
+  # under a different competency (byte-identical pairs are already covered
+  # by (b)), and at least one side is unlocated - meaning
+  # mod_highlight_locate() dropped the nested copy because the containing
+  # copy claimed that span. Neither (a) (needs both located) nor (b) (needs
+  # identical text) sees this. A minimum shared length avoids flagging
+  # incidental short phrases ("team player") that nest by coincidence.
+  MIN_SUBSTRING_CHARS <- 20L
+
+  for (i in seq_len(n - 1)) {
+    for (j in seq(i + 1, n)) {
+      if (texts$competency_id[i] == texts$competency_id[j]) next
+      if (norm[i] == norm[j]) next # (b)
+      shorter <- if (nchar(norm[i]) <= nchar(norm[j])) norm[i] else norm[j]
+      longer <- if (nchar(norm[i]) <= nchar(norm[j])) norm[j] else norm[i]
+      if (nchar(shorter) < MIN_SUBSTRING_CHARS) next
+      if (!grepl(shorter, longer, fixed = TRUE)) next
+      if (anyNA(c(
+        texts$start[i], texts$end[i], texts$start[j], texts$end[j]
+      ))) {
+        addConflict("substring_duplicate", i, j)
+      }
+    }
+  }
+
   conflicts <- if (length(conflicts) > 0) bind_rows(conflicts) else empty_conflicts
   list(has_conflicts = nrow(conflicts) > 0, conflicts = conflicts)
+}
+
+# Minimum length (characters, after edge cleanup) for a trimmed loser
+# fragment to be worth keeping as its own competency_text row.
+CONFLICT_MIN_KEEP_CHARS <- 15L
+
+# Given a located loser quote [l_start, l_end) with text l_text, and the
+# winning quote (span w_start/w_end and/or verbatim w_text), return a data
+# frame of the loser's surviving fragments (columns text, start, end) after
+# removing the region that overlaps the winner. Returns an empty data frame
+# when nothing substantial remains, or NULL when the loser can't be trimmed
+# (not located, or no identifiable overlap region) and should be deleted
+# whole.
+conflict_trim_loser <- function(l_text, l_start, l_end, w_text, w_start, w_end) {
+  if (is.na(l_start) || is.na(l_end)) return(NULL)
+  L <- l_end - l_start
+  if (is.na(l_text) || nchar(l_text) != L) return(NULL)
+
+  rel_lo <- NA_integer_
+  rel_hi <- NA_integer_
+
+  if (!is.na(w_start) && !is.na(w_end) && w_start < l_end && w_end > l_start) {
+    rel_lo <- max(0L, as.integer(w_start - l_start))
+    rel_hi <- min(L, as.integer(w_end - l_start))
+  } else if (!is.na(w_text) && nzchar(w_text)) {
+    p <- regexpr(w_text, l_text, fixed = TRUE)
+    if (p[1] != -1) {
+      rel_lo <- p[1] - 1L
+      rel_hi <- rel_lo + attr(p, "match.length")
+    }
+  }
+
+  if (is.na(rel_lo) || rel_hi <= rel_lo) return(NULL)
+  if (rel_lo <= 0 && rel_hi >= L) {
+    return(data.frame(
+      text = character(0), start = integer(0), end = integer(0)
+    ))
+  }
+
+  spans <- list()
+  if (rel_lo > 0) spans <- c(spans, list(c(0L, rel_lo)))
+  if (rel_hi < L) spans <- c(spans, list(c(rel_hi, L)))
+
+  # Stray separators left dangling by the cut - whitespace and sentence
+  # punctuation only, so bracketed tokens like "[name_redact]" survive
+  edge <- "[[:space:],;:.!?-]*"
+  frags <- lapply(spans, function(s) {
+    piece <- substr(l_text, s[1] + 1L, s[2])
+    lead <- attr(regexpr(paste0("^", edge), piece), "match.length")
+    piece <- substr(piece, lead + 1L, nchar(piece))
+    trail <- attr(regexpr(paste0(edge, "$"), piece), "match.length")
+    piece <- substr(piece, 1L, nchar(piece) - trail)
+    if (nchar(piece) < CONFLICT_MIN_KEEP_CHARS) return(NULL)
+    new_start <- l_start + s[1] + lead
+    data.frame(
+      text = piece, start = as.integer(new_start),
+      end = as.integer(new_start + nchar(piece)),
+      stringsAsFactors = FALSE
+    )
+  })
+  frags <- frags[!vapply(frags, is.null, logical(1))]
+  if (length(frags) == 0) {
+    return(data.frame(
+      text = character(0), start = integer(0), end = integer(0)
+    ))
+  }
+  do.call(rbind, frags)
 }
 
 #' Apply resolve-prompt decisions to conflicting competency_text rows
 #'
 #' Takes the cluster/option mapping from build_resolve_conflicts() and the
 #' model's parsed resolutions (llm_comp_resolve()$data) and applies them: for
-#' each conflictId, deletes the competency_text row(s) for every losing
-#' option (or all of them, if the model chose to discard the quote entirely
-#' via cIndex 0), keeping only the winning row. A competency_score row left
-#' with no competency_text children afterward is deleted too, since a
-#' competency with no supporting evidence shouldn't be scored.
+#' each conflictId the winning option keeps the overlapping evidence and the
+#' losing option(s) give it up (cIndex 0 discards it from all of them). A
+#' competency_score row left with no competency_text children afterward is
+#' deleted too, since a competency with no supporting evidence shouldn't be
+#' scored.
 #'
-#' Unlike dbCompExtraction(), this only ever removes the specific
+#' Unlike dbCompExtraction(), this only ever touches the specific
 #' competency_text rows identified by the conflict - it never touches quotes
 #' that weren't part of one.
+#'
+#' A losing quote is not always deleted whole: when it only partially
+#' overlaps the winning quote (or contains it), just the overlapping span is
+#' removed and the loser keeps its non-overlapping remainder(s) under its
+#' original competency - so a long quote that shares only a clause with the
+#' winner still contributes its other clause (a quote split in two by an
+#' interior overlap becomes two rows). The row is deleted only when nothing
+#' substantial is left (every remainder shorter than CONFLICT_MIN_KEEP_CHARS
+#' after trimming, or the loser was never located).
 #'
 #' @param conn NARRATE database connection
 #' @param clusters Cluster/option data frame from build_resolve_conflicts()
 #'   (columns conflictId, competency_text_id, competency_score_id,
-#'   competency_id, comp_order)
+#'   competency_id, comp_order, text, start, end)
 #' @param resolutions List as returned by llm_comp_resolve()$data - each
 #'   element has conflictId and cIndex (0 = discard)
 #' @param commit (Default = TRUE)
 #'
 #' @import dplyr
-#' @importFrom sqlife tbl_delete tbl_update
+#' @importFrom sqlife tbl_delete tbl_update tbl_insert
 #'
 #' @returns A list with resolved (integer vector of conflictIds successfully
 #'   applied) and unresolved (integer vector of conflictIds the model didn't
@@ -1080,6 +1188,8 @@ dbCompConflictResolve <- function(conn, clusters, resolutions, commit = TRUE) {
   to_delete_text <- integer(0)
   affected_scores <- integer(0)
   to_reposition <- list()
+  to_trim <- list()
+  to_insert_text <- list()
 
   all_conflict_ids <- unique(clusters$conflictId)
   chosen <- if (length(resolutions) > 0) {
@@ -1116,28 +1226,90 @@ dbCompConflictResolve <- function(conn, clusters, resolutions, commit = TRUE) {
 
     losers <- opts[opts$comp_order != cIndex, ]
 
+    win_start <- winner$start[1]
+    win_end <- winner$end[1]
+    win_text <- winner$text[1]
+
     # The winning option may be the copy mod_highlight_locate() couldn't
     # place (start/end NA) while a losing option for the same underlying
-    # quote does have a real position - transfer it onto the winner instead
-    # of deleting the only row that knows where the text actually is
-    if (is.na(winner$start[1])) {
-      positioned <- losers[!is.na(losers$start), ]
-      if (nrow(positioned) > 0) {
+    # quote does have a real position. Derive the winner's real span from a
+    # positioned loser whose text is nested with the winner's (either
+    # direction - the winner's quote inside the loser's, or vice versa), so
+    # the span always matches nchar(win_text). If none of the positioned
+    # losers is nested with the winner, leave the winner NA rather than
+    # writing a span that doesn't fit its text.
+    if (is.na(win_start) && !is.na(win_text)) {
+      positioned <- losers[
+        !is.na(losers$start) & !is.na(losers$end) &
+          nchar(losers$text) == (losers$end - losers$start), ,
+        drop = FALSE
+      ]
+      for (k in seq_len(nrow(positioned))) {
+        pl <- positioned[k, ]
+        p <- regexpr(win_text, pl$text, fixed = TRUE) # winner inside loser
+        q <- regexpr(pl$text, win_text, fixed = TRUE) # loser inside winner
+        if (p[1] != -1) {
+          win_start <- as.integer(pl$start + (p[1] - 1L))
+        } else if (q[1] != -1) {
+          win_start <- as.integer(pl$start - (q[1] - 1L))
+        } else {
+          next
+        }
+        if (win_start < 0) { win_start <- NA_integer_; next }
+        win_end <- as.integer(win_start + nchar(win_text))
         to_reposition[[length(to_reposition) + 1]] <- data.frame(
           id = winner$competency_text_id[1],
-          start = positioned$start[1],
-          end = positioned$end[1]
+          start = win_start,
+          end = win_end
+        )
+        break
+      }
+    }
+
+    for (li in seq_len(nrow(losers))) {
+      lr <- losers[li, ]
+      frags <- conflict_trim_loser(
+        lr$text, lr$start, lr$end, win_text, win_start, win_end
+      )
+
+      if (is.null(frags) || nrow(frags) == 0) {
+        # Nothing worth keeping - remove the whole row
+        to_delete_text <- c(to_delete_text, lr$competency_text_id)
+        affected_scores <- c(affected_scores, lr$competency_score_id)
+        next
+      }
+
+      # First fragment updates the existing row; any further fragment
+      # (a quote split in two by an interior overlap) becomes a new row
+      to_trim[[length(to_trim) + 1]] <- data.frame(
+        id = lr$competency_text_id,
+        text_match = frags$text[1],
+        start = frags$start[1],
+        end = frags$end[1]
+      )
+      if (nrow(frags) > 1) {
+        to_insert_text[[length(to_insert_text) + 1]] <- data.frame(
+          competency_score_id = lr$competency_score_id,
+          text_match = frags$text[-1],
+          start = frags$start[-1],
+          end = frags$end[-1]
         )
       }
     }
 
-    to_delete_text <- c(to_delete_text, losers$competency_text_id)
-    affected_scores <- c(affected_scores, losers$competency_score_id)
     resolved <- c(resolved, cid)
   }
 
   if (length(to_reposition) > 0) {
     tbl_update(bind_rows(to_reposition), conn, "competency_text", commit = commit)
+  }
+
+  if (length(to_trim) > 0) {
+    tbl_update(bind_rows(to_trim), conn, "competency_text", commit = commit)
+  }
+
+  if (length(to_insert_text) > 0) {
+    tbl_insert(bind_rows(to_insert_text), conn, "competency_text", commit = commit)
   }
 
   if (length(to_delete_text) > 0) {

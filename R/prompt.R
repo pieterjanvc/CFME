@@ -254,17 +254,29 @@ prompt_template_path <- function(file) {
 #' A), so this groups pairwise conflicts into connected clusters first and
 #' asks the model to make one decision per cluster among all of its options.
 #'
+#' Each conflict lists every competing quote with its own verbatim text (the
+#' quotes are no longer assumed byte-identical - a "substring_duplicate"
+#' conflict has genuinely different text on each side). When `conn` is
+#' supplied, a `# CURRENT EXTRACTIONS` block is prepended listing every quote
+#' currently extracted for the review, grouped by competency, so the model
+#' can judge each decision against the whole picture (e.g. leave a contested
+#' quote with the competency that would otherwise have no evidence).
+#'
 #' @param conflicts The conflicts data frame from
 #'   dbCompExtractionCheckConflicts()
 #' @param comp_data Data frame with competency_id, comp_order, name (as
 #'   returned by prompt_build_competencies()$comp_data)
+#' @param conn (Optional) NARRATE database connection. When given, the full
+#'   current extraction set for the review is included as read-only context.
 #'
-#' @returns List with text (the formatted CONFLICTS section, "" if no
-#'   conflicts) and clusters, a data frame (one row per option per
-#'   conflictId) with columns conflictId, competency_text_id,
-#'   competency_score_id, competency_id, comp_order, text, start, end
+#' @import dplyr
+#'
+#' @returns List with text (the formatted prompt body, "" if no conflicts)
+#'   and clusters, a data frame (one row per option per conflictId) with
+#'   columns conflictId, competency_text_id, competency_score_id,
+#'   competency_id, comp_order, text, start, end
 #' @export
-build_resolve_conflicts <- function(conflicts, comp_data) {
+build_resolve_conflicts <- function(conflicts, comp_data, conn = NULL) {
   empty_clusters <- data.frame(
     conflictId = integer(0), competency_text_id = integer(0),
     competency_score_id = integer(0), competency_id = integer(0),
@@ -339,16 +351,67 @@ build_resolve_conflicts <- function(conflicts, comp_data) {
   lines <- vapply(cluster_roots, function(root) {
     id <- conflictId_map[as.character(root)]
     rows <- options[options$conflictId == id, ]
-    quote_text <- rows$text[1] # identical across an exact-match cluster
     opts <- paste(
-      sprintf("   - cIndex %d: %s", rows$comp_order, rows$name),
+      sprintf("   - cIndex %d (%s): \"%s\"", rows$comp_order, rows$name, rows$text),
       collapse = "\n"
     )
-    sprintf("%d. Quote: \"%s\"\n%s", id, quote_text, opts)
+    sprintf(
+      paste0(
+        "%d. These quotes were assigned to different competencies but ",
+        "overlap in the evaluation text. Keep the shared evidence under ",
+        "exactly one competency (its cIndex), or 0 to discard it.\n%s"
+      ),
+      id, opts
+    )
   }, character(1))
 
+  conflicts_block <- paste0(
+    "# CONFLICTS\n\n", paste(lines, collapse = "\n\n")
+  )
+
+  # Optional read-only context: everything currently extracted for the review
+  context_block <- ""
+  if (!is.null(conn) && nrow(options) > 0) {
+    ra_id <- tbl(conn, "competency_score") |>
+      filter(id == local(options$competency_score_id[1])) |>
+      pull(review_assignment_id)
+
+    all_ext <- tbl(conn, "competency_score") |>
+      filter(review_assignment_id == local(ra_id)) |>
+      select(competency_score_id = id, competency_id) |>
+      inner_join(
+        tbl(conn, "competency_text") |>
+          select(competency_score_id, text_match),
+        by = "competency_score_id"
+      ) |>
+      collect() |>
+      merge(
+        comp_data[, c("competency_id", "comp_order", "name")],
+        by = "competency_id"
+      )
+
+    if (nrow(all_ext) > 0) {
+      all_ext <- all_ext[order(all_ext$comp_order), ]
+      ctx_lines <- vapply(
+        split(all_ext, all_ext$comp_order),
+        function(g) {
+          quotes <- paste(sprintf("   - \"%s\"", g$text_match), collapse = "\n")
+          sprintf("cIndex %d (%s):\n%s", g$comp_order[1], g$name[1], quotes)
+        },
+        character(1)
+      )
+      context_block <- paste0(
+        "# CURRENT EXTRACTIONS\n\n",
+        "All quotes currently extracted for this review, for context only ",
+        "(resolve only the numbered conflicts below):\n\n",
+        paste(ctx_lines, collapse = "\n\n"),
+        "\n\n"
+      )
+    }
+  }
+
   list(
-    text = paste(lines, collapse = "\n\n"),
+    text = paste0(context_block, conflicts_block),
     clusters = options[, c(
       "conflictId", "competency_text_id", "competency_score_id",
       "competency_id", "comp_order", "text", "start", "end"

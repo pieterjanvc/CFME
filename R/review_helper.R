@@ -23,14 +23,15 @@ llm_build_extract_body <- function(evaluation_text, prompt) {
 
 #' Build a responses API request body for conflict resolution
 #'
-#' @param conflicts_text Formatted CONFLICTS section text (build_resolve_conflicts()$text)
+#' @param conflicts_text Formatted prompt body from build_resolve_conflicts()$text
+#'   (already includes its own section headers)
 #' @param prompt System prompt (resolve instructions, from prompt_generate_resolve())
 #' @returns Named list for use as a responses API body (model field excluded)
 llm_build_resolve_body <- function(conflicts_text, prompt) {
   list(
     instructions = prompt,
     input = paste0(
-      "# CONFLICTS\n\n", conflicts_text,
+      conflicts_text,
       "\n\nRespond with JSON as instructed."
     ),
     text = list(format = list(type = "json_object")),
