@@ -221,9 +221,26 @@ Backup: `local/backup/narrate_pre-reanchor_20260909-103618.db`.
 | mean utility / sentiment | 2.69 / 4.83 → 2.69 / 4.86 (negligible) |
 | final rubric-3 AI status | 2146 @ 5, 2 @ -4 (1650 + 1798) |
 
+**Post-run cleanup (2026-09-09):** a full DB scan for residual rule-2
+conflicts found review **1819** at statusCode 5 with an undetected `overlap` —
+Phase 0's `dbRelocateCompText()` had filled a NULL position that landed on
+another competency's span, and Phase 0 ran no conflict check / re-score
+(the plan assumed it "only adds highlights"). Fixed by hand: statusCode 6 →
+`llm_comp_resolve_run()` → `llm_comp_score_run()` → 5, no competency lost,
+scores unchanged (backup `narrate_pre-1819fix_20260909-111538.db`). It was
+the only statusCode-5 review affected. **If `dbRelocateCompText()` is ever
+run again at scale, follow it with a conflict scan + resolve/re-score of the
+filled reviews.**
+
+**Final rubric-3 AI state:** 2146 @ statusCode 5, 2 @ -4 (1650, 1798).
+competency_text: 14501 located, 8 flagged `locate_status='unlocated'` (all in
+sc-5 reviews, for human adjudication), 1 NULL+unflagged (in 1650, sc-4). The
+only remaining rule-2 conflicts are in 1650 and 1798 — both already at -4 for
+human review. No hidden issues.
+
 **Not yet done:** Phase 3 app display of the 8 `locate_status = 'unlocated'`
-rows in `inst/review_app.R`; commit. `tokens_in/out` on `review_assignment`
-get overwritten with the re-anchor call's counts (matches
+rows in `inst/review_app.R`. `tokens_in/out` on `review_assignment` get
+overwritten with the re-anchor call's counts (matches
 `llm_comp_resolve_run()`).
 
 ### Phase 3 — handle the unanchorable remainder
