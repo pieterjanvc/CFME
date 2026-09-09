@@ -206,6 +206,105 @@ llm_comp_resolve_run <- function(
   bind_rows(results)
 }
 
+#' Re-anchor paraphrased competency evidence for a set of reviews (real-time)
+#'
+#' Phase 2 of the paraphrased-quote fix (dev/paraphrase_fix_plan.md). For each
+#' review at statusCode 5 (Batch scoring complete) that still has
+#' `competency_text` rows with no located position, builds one re-anchor
+#' request (build_reanchor_items()) from the evaluation text and the unplaced
+#' quotes, asks the LLM for the verbatim span each quote refers to
+#' (llm_comp_reanchor()), and applies the answer via dbCompReanchorApply().
+#'
+#' Per review, the resulting statusCode is:
+#'   - 3  if any row was re-anchored (text_match changed) and no rule-2
+#'        conflict resulted - ready for re-scoring
+#'   - 6  if a re-anchor introduced a rule-2 conflict - needs resolve first
+#'   - 5  unchanged (nothing re-anchored, or the API call failed) - any rows
+#'        the model couldn't anchor are now marked locate_status = 'unlocated'
+#'        for human review
+#'
+#' No batch equivalent yet - see llm_comp_reanchor_batch_submit() when added.
+#'
+#' @param conn DB connection
+#' @param review_ids Integer vector of review_assignment IDs to process
+#' @param model Azure deployment name. Default = "gpt-5.1"
+#' @param endpoint Azure endpoint base URL
+#' @param verbose Print progress messages. Default = FALSE
+#' @param force Process even if not at statusCode 5. Default = FALSE
+#'
+#' @import dplyr
+#' @importFrom sqlife tbl_update
+#' @returns Data frame summarising results per review (review_id, statusCode,
+#'   n_items, n_reanchored, n_flagged, call_status, tokens_in, tokens_out), or
+#'   NULL if none of the given IDs have anything to re-anchor
+#' @export
+llm_comp_reanchor_run <- function(
+  conn,
+  review_ids,
+  model = "gpt-5.1",
+  endpoint = "https://azure-ai.hms.edu",
+  verbose = FALSE,
+  force = FALSE
+) {
+  review_info <- db_fetch_review_reanchor(conn, review_ids, force)
+  if (is.null(review_info)) return(invisible(NULL))
+
+  prompt <- paste(
+    readLines(prompt_template_path("prompt_comp_reanchor.md"), warn = FALSE),
+    collapse = "\n"
+  )
+
+  results <- lapply(seq_len(nrow(review_info)), function(i) {
+    rid <- review_info$review_id[i]
+    items <- review_info$items[[i]]
+    if (verbose) {
+      message("Re-anchoring review ", rid, " (", nrow(items), " items)...")
+    }
+
+    body_text <- build_reanchor_items(review_info$evaluation[i], items)
+    result <- llm_comp_reanchor(body_text, prompt, model = model, endpoint = endpoint)
+
+    applied <- NULL
+    new_status <- 5L
+    if (result$statusCode == 2) {
+      applied <- dbCompReanchorApply(conn, rid, items, result$data, commit = TRUE)
+      if (applied$summary[["n_reanchored"]] > 0) {
+        new_status <- if (
+          isTRUE(dbCompExtractionCheckConflicts(conn, rid)$has_conflicts)
+        ) {
+          6L
+        } else {
+          3L
+        }
+      }
+    }
+
+    tbl_update(
+      data.frame(
+        id = rid,
+        statusCode = new_status,
+        tokens_in = result$tokens_in,
+        tokens_out = result$tokens_out,
+        modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+      ),
+      conn, "review_assignment", returnData = FALSE, commit = TRUE
+    )
+
+    data.frame(
+      review_id = rid,
+      statusCode = new_status,
+      n_items = nrow(items),
+      n_reanchored = if (is.null(applied)) NA_integer_ else applied$summary[["n_reanchored"]],
+      n_flagged = if (is.null(applied)) NA_integer_ else applied$summary[["n_flagged"]],
+      call_status = result$statusCode,
+      tokens_in = result$tokens_in,
+      tokens_out = result$tokens_out
+    )
+  })
+
+  bind_rows(results)
+}
+
 #' Run synchronous competency scoring for a set of review assignments
 #'
 #' Fetches extracted competency texts from the database, calls llm_comp_score()
@@ -458,6 +557,65 @@ llm_comp_resolve_batch_submit <- function(
   db_record_batch(conn, file_input_id, batch_id, review_info$review_id, review_status = 7L)
 }
 
+#' Submit a batch competency-evidence re-anchor job
+#'
+#' Batch equivalent of llm_comp_reanchor_run() (Phase 2 of the paraphrased-quote
+#' fix). For each review at statusCode 5 with unplaced competency_text rows,
+#' builds one re-anchor request (build_reanchor_items() + the shared
+#' inst/prompt_comp_reanchor.md), uploads them as one batch, and records it.
+#' Submitted reviews move to statusCode 8 (Reanchor batch submitted);
+#' batch_reanchor_process() applies the results.
+#'
+#' @param conn DB connection
+#' @param review_ids Integer vector of review_assignment IDs to process
+#' @param model Azure batch deployment name. Default = "gpt-5.1-batch"
+#' @param endpoint Azure endpoint base URL
+#' @param api_key API key. Default = HMS_AZURE_API env var
+#' @param verbose Print progress messages. Default = FALSE
+#' @param force Submit even if not at statusCode 5. Default = FALSE
+#'
+#' @returns Inserted batch record data frame
+#' @export
+llm_comp_reanchor_batch_submit <- function(
+  conn,
+  review_ids,
+  model = "gpt-5.1-batch",
+  endpoint = "https://azure-ai.hms.edu",
+  api_key = Sys.getenv("HMS_AZURE_API"),
+  verbose = FALSE,
+  force = FALSE
+) {
+  review_info <- db_fetch_review_reanchor(conn, review_ids, force)
+  if (is.null(review_info)) return(invisible(NULL))
+
+  prompt <- paste(
+    readLines(prompt_template_path("prompt_comp_reanchor.md"), warn = FALSE),
+    collapse = "\n"
+  )
+
+  requests <- setNames(
+    lapply(seq_len(nrow(review_info)), function(i) {
+      body_text <- build_reanchor_items(
+        review_info$evaluation[i], review_info$items[[i]]
+      )
+      llm_build_reanchor_body(body_text, prompt)
+    }),
+    paste0("review-", review_info$review_id)
+  )
+
+  if (verbose) message("Uploading ", length(requests), " requests...")
+  file_input_id <- llm_batch_upload(
+    llm_batch_build_jsonl(requests, model), endpoint, api_key
+  )
+
+  if (verbose) message("Creating batch job...")
+  batch_id <- llm_batch_create(file_input_id, endpoint, api_key)
+
+  db_record_batch(
+    conn, file_input_id, batch_id, review_info$review_id, review_status = 8L
+  )
+}
+
 # ─── Batch process ────────────────────────────────────────────────────────────
 
 #' Process completed batch extraction results
@@ -614,6 +772,93 @@ batch_resolve_process <- function(batch_id, conn, max_attempts = 2) {
       id = rid,
       statusCode = new_status,
       note = sprintf("conflict_resolve_attempts:%d", attempts),
+      tokens_in = r$tokens_in,
+      tokens_out = r$tokens_out,
+      modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+      stringsAsFactors = FALSE
+    )
+  }) |>
+    bind_rows()
+
+  tbl_update(to_update, conn, "review_assignment", returnData = FALSE, commit = FALSE)
+
+  tbl_update(
+    data.frame(
+      id = batch_id, statusCode = 4L,
+      tokens_in = sum(to_update$tokens_in, na.rm = TRUE),
+      tokens_out = sum(to_update$tokens_out, na.rm = TRUE)
+    ),
+    conn, "batch"
+  )
+}
+
+#' Process completed batch re-anchor results
+#'
+#' Batch equivalent of llm_comp_reanchor_run(). Fetches and parses the batch
+#' output and, per review, re-derives the itemId -> competency_text_id mapping
+#' from its current unplaced rows (deterministic - nothing touches a review
+#' between submit at statusCode 8 and here), applies the model's spans via
+#' dbCompReanchorApply(), and re-checks for rule-2 conflicts.
+#'
+#' Per review, the resulting statusCode is:
+#'   - 3  if >= 1 row was re-anchored and no rule-2 conflict resulted
+#'   - 6  if a re-anchor created a rule-2 conflict (goes to the resolve step)
+#'   - 5  unchanged (nothing re-anchored, a parse failure, or the current
+#'        unplaced-row count no longer matches the request) - any rows the
+#'        model couldn't anchor are marked locate_status = 'unlocated'
+#'
+#' A parse failure or count mismatch leaves the review at 5 for another
+#' llm_comp_reanchor_batch_submit() round.
+#'
+#' @param batch_id Internal batch ID (row id in the batch table)
+#' @param conn DB connection
+#'
+#' @import dplyr
+#' @importFrom sqlife tbl_update
+#' @returns Updated batch info data frame
+#' @export
+batch_reanchor_process <- function(batch_id, conn) {
+  batch_info <- llm_batch_status(batch_id, conn)
+
+  if (batch_info$statusCode != 3) {
+    message("No results to process")
+    return(batch_info)
+  }
+
+  results <- batch_results_preprocess(batch_info$file_output_id)
+  review_ids <- vapply(results, "[[", integer(1), "review_id")
+
+  # itemId -> competency_text_id mapping, rebuilt from each review's current
+  # unplaced rows (force = TRUE: reviews are at statusCode 8, not 5)
+  info <- db_fetch_review_reanchor(conn, review_ids, force = TRUE)
+
+  to_update <- lapply(results, function(r) {
+    rid <- r$review_id
+    row <- if (is.null(info)) NULL else info[info$review_id == rid, ]
+
+    new_status <- 5L
+    if (r$statusCode == 2 && !is.null(row) && nrow(row) == 1) {
+      items <- row$items[[1]]
+      anchors <- r$data$anchors
+      # only apply if the response covers exactly the current item set
+      n_ans <- if (is.null(anchors)) 0L else length(anchors)
+      if (n_ans == nrow(items)) {
+        applied <- dbCompReanchorApply(conn, rid, items, anchors, commit = FALSE)
+        if (applied$summary[["n_reanchored"]] > 0) {
+          new_status <- if (
+            isTRUE(dbCompExtractionCheckConflicts(conn, rid)$has_conflicts)
+          ) {
+            6L
+          } else {
+            3L
+          }
+        }
+      }
+    }
+
+    data.frame(
+      id = rid,
+      statusCode = new_status,
       tokens_in = r$tokens_in,
       tokens_out = r$tokens_out,
       modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),

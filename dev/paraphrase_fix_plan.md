@@ -1,6 +1,6 @@
 # Plan: fix paraphrased / unlocatable AI competency quotes
 
-Status: **not started** — scoped 2026-09-08, to be tackled in a later session.
+Status: **ready to start** — scoped 2026-09-08, all §6 decisions resolved.
 Companion to the rule-2 conflict work committed in `b25be1e`.
 
 ---
@@ -105,19 +105,32 @@ span has to be found (LLM) or the quote discarded.
 
 ## 5. Proposed approach (phased, each shippable alone)
 
-### Phase 0 — relocate pass for the mechanically-recoverable rows (the ~71)
+### Phase 0 — relocate pass for the mechanically-recoverable rows — DONE 2026-09-08
 
-New dev function, e.g. `dbRelocateCompText(conn, review_ids = NULL)`:
+`dbRelocateCompText(conn, review_assignment_ids, apply_moves, dry_run, commit)`
+added to `R/dbOperations.R` (+ internal helper `db_locate_text()`, which
+`dbCompExtraction()` now also uses). `dev/size_paraphrase_na.R` (dry-run
+sizing) and `dev/relocate_comp_text.R` (backup + apply + validate) added.
 
-1. For each target review, rebuild the canonical locate text once.
-2. For every `competency_text` row (whole review, not just `NA` ones — so the
-   non-overlapping claim order is preserved), re-run `mod_highlight_locate()`
-   over all `text_match` values in insertion order.
-3. Write back `start`/`end` where the new result differs; **never** overwrite a
-   good offset with `NA`.
-4. Report per review: rows filled, rows changed, rows still `NA`.
+Behaviour: per review, re-locate the **whole** `competency_text` set in `id`
+order; write back only rows that were `NA` (`apply_moves = FALSE` default —
+already-located rows never move, never reset to `NA`).
 
-No LLM, fully reversible via backup. Run DB-wide.
+Result on `local/narrate.db` (backup
+`local/backup/narrate_pre-paraphrase-phase0_20260908-211806.db`):
+
+| | count |
+|---|---|
+| NA-position rows before | 236 |
+| **filled by Phase 0** | **52** |
+| already-located rows that would move (left untouched) | 9 |
+| **still NA → Phase 2/3** | **184** (183 at rubric-3/statusCode 5 across 132 reviews; +1 in review 1650 @ statusCode -4, out of scope) |
+
+Validation passed: 0 positions lost, every filled `[start,end)` slices its
+`text_match` back out (ws-tolerant). No re-score needed (positions only).
+
+(The 71/164 split in §3 was pre-ws-fallback; the rule-2 reprocess already ran
+the ws-tolerant locator, so only 52 were left to recover mechanically.)
 
 ### Phase 1 — fix the text-source mismatch (4b) so it stops recurring
 
@@ -139,24 +152,79 @@ Pick one:
 Recommendation: try **1a**, fall back to **1c** if extraction quality drops.
 Do **not** do 1b unless 1a is unacceptable — the migration is the risky part.
 
-### Phase 2 — LLM re-anchor for genuine paraphrases (the ~164)
+### Phase 2 — LLM re-anchor for genuine paraphrases — LIVE PATH CODE DONE 2026-09-08
 
-New step, batch + live, mirroring the resolve step's shape:
+Mirrors the resolve step. New code:
 
-- Input per `NA` row: the evaluation text + the model's paraphrased
-  `text_match` + its competency name.
-- Ask: *return the single exact verbatim span from the evaluation that this
-  evidence refers to, or `NONE` if it does not correspond to any actual text.*
-- Output contract: `{"anchor": "<verbatim span>"}` or `{"anchor": null}`.
-- Apply: validate the returned span is a verbatim substring (ws-tolerant),
-  `mod_highlight_locate()` it, update `text_match` + `start`/`end`. On `null`
-  or a non-verbatim return → Phase 3.
-- Group by review so one call can re-anchor all of a review's `NA` rows and
-  respect non-overlapping claims.
+| file | added |
+|---|---|
+| `inst/prompt_comp_reanchor.md` | static instructions (verbatim span or `null`) |
+| `R/review_helper.R` | `llm_build_reanchor_body()`, `llm_comp_reanchor()` (API call, statusCodes 0/1/2), `db_fetch_review_reanchor()` (per-review: eval text + `items` df of unplaced rows), `build_reanchor_items()` (formats the input body) |
+| `R/dbOperations.R` | `dbCompReanchorApply(conn, ra_id, items, anchors, commit)` — validates each anchor is ws-tolerant-verbatim, re-locates the whole `competency_text` set with anchors swapped in (frozen located rows act as fixed claims, never moved), writes `text_match`+`start`+`end` on a clean placement, else sets `locate_status = 'unlocated'`. Cross-competency overlap guard flags rather than writes. |
+| `R/review.R` | `llm_comp_reanchor_run()` (live) — one call per review; on ≥1 re-anchor → statusCode 3, or 6 if the change created a rule-2 conflict; else stays 5 with rows flagged |
+| `dev/reanchor_live_test.R` | smoke test on N reviews against a working copy, prints each anchored span in context |
 
-Keep it a **separate** operation from extraction and from resolve — same
-reasoning as in the rule-2 work: a tight, verifiable contract, no competency
-re-selection.
+Contract: `{"anchors": [{"itemId": N, "anchor": "<span>" | null}]}`, one entry
+per unplaced row (grouped by review, non-overlap preserved). Separate op from
+extraction and resolve — no competency re-selection.
+
+Tested with hand-written anchors on a DB copy: valid span → row rewritten,
+slice matches; `null` → `locate_status='unlocated'`, `start` stays NA;
+non-verbatim span → flagged.
+
+**Live smoke test (17 reviews / 19 quotes, 2026-09-09):** 19/19 re-anchored,
+0 false flags after two fixes:
+- dropped the cross-competency overlap guard in `dbCompReanchorApply()` — a
+  re-anchored span nesting another competency's quote is a real rule-2
+  conflict; `llm_comp_reanchor_run()` re-checks and routes those to statusCode
+  6 (resolve), same as extraction does.
+- added `reanchor_locate()` — the model reliably copies a span's body but
+  keeps the paraphrase's subject word (`She`/`she`, `[name_redact]`/`He`); on
+  a miss it strips the leading token, re-locates the remainder, and walks the
+  start back over the real subject token. `text_match` is stored as the actual
+  evaluation slice, not the model's string.
+- prompt tightened: shortest span, evaluation's exact wording, first fragment
+  only on `...` stitches.
+~1/3 of touched reviews route to statusCode 6 (genuine nested-quote rule-2s);
+the rest to 3.
+
+### Batch path — DONE 2026-09-09
+
+| file | added |
+|---|---|
+| `inst/narrate.sql` | statusCode 8 "Reanchor batch submitted" (+ migrated onto `local/narrate.db`) |
+| `R/review.R` | `llm_comp_reanchor_batch_submit()` (5 → 8), `batch_reanchor_process()` (8 → 3 / 6 / 5; re-derives the itemId→ct_id map from current unplaced rows, guards on count mismatch) — same shape as the resolve batch pair |
+| `dev/reanchor_batch.R` | full pipeline driver mirroring `dev/reprocess_rule2_conflicts.R`: backup → reanchor batch → resolve loop (≤2 rounds) → score batch → summary. Resumable via STATE_FILE, PushOver per step, `REANCHOR_DB` env override for testing on a copy. |
+
+**End-to-end batch test (6 reviews, scratch copy, 2026-09-09):** ~17 min,
+3 batch round-trips (reanchor 21 -> resolve 22 -> score 23). Result:
+19 quotes re-anchored, **0 flagged, 0 slice mismatches** (all 50 located rows
+in these reviews verified: `substr(plainText, start+1, end) == text_match`).
+4 reviews hit a rule-2 conflict from re-anchoring, all resolved in 1 round;
+2 competencies dropped where the re-anchored span's evidence was genuinely
+shared (same behaviour as the rule-2 reprocess). Utility/sentiment unchanged.
+All 6 back to statusCode 5.
+
+### FULL RUN — DONE 2026-09-09
+
+`dev/reanchor_batch.R` on all 132 rubric-3 AI reviews. ~23 min, 3 batches
+(reanchor 21 -> resolve 22 [63 reviews, 1 round] -> score 23 [126 reviews]).
+Backup: `local/backup/narrate_pre-reanchor_20260909-103618.db`.
+
+| outcome | count |
+|---|---|
+| quotes re-anchored (stored slice == `text_match` exactly) | **145 / 145** |
+| flagged `locate_status = 'unlocated'` for human review | **8** (5 are the model having quoted a `---question header` — clean rejects; 3 paraphrase/fabrication) |
+| reviews that hit a rule-2 conflict from re-anchoring | 63 → 62 resolved, **1 → statusCode -4** (review 1798, resolve attempts exhausted, needs human — same escape hatch as review 1650 in the rule-2 work) |
+| competency_score rows dropped (shared-evidence resolution) | 17 (807 → 790) |
+| new ws-tolerant slice diffs introduced | **0** (28 before, 28 after — all pre-existing) |
+| mean utility / sentiment | 2.69 / 4.83 → 2.69 / 4.86 (negligible) |
+| final rubric-3 AI status | 2146 @ 5, 2 @ -4 (1650 + 1798) |
+
+**Not yet done:** Phase 3 app display of the 8 `locate_status = 'unlocated'`
+rows in `inst/review_app.R`; commit. `tokens_in/out` on `review_assignment`
+get overwritten with the re-anchor call's counts (matches
+`llm_comp_resolve_run()`).
 
 ### Phase 3 — handle the unanchorable remainder
 
@@ -182,19 +250,39 @@ notify → re-score, resumable, PushOver per step).
 
 ---
 
-## 6. Decisions needed before coding
+## 6. Decisions — RESOLVED 2026-09-08
 
-1. **Scope:** rubric 3 / `statusCode 5` only, or all AI `competency_text`
-   `NA` rows DB-wide?
-2. **Phase 1 choice:** 1a vs 1c (vs 1b).
-3. **Phase 3 choice:** drop (D1) vs flag-for-human (D2). D2 needs a schema
-   touch.
-4. **Re-score everything touched, or only Phase 2/3 changes?** (Phase 0 only
-   adds highlights, doesn't change `text_match` — arguably no re-score needed,
-   but the earlier decision was "full re-score is fine, it re-interprets the
-   whole evaluation".)
-5. **Model / batch vs live** for Phase 2 (default: `gpt-5.1-batch`, same as
-   the rest of the pipeline).
+1. **Scope:** rubric 3 only. Older rubrics are retired. (Confirmed by data:
+   all 235 `NA` rows are already rubric 3 / `statusCode 5` / reviewer gpt-5.1;
+   the only other `NA` row is 1 at `statusCode -4`, an error state — ignore it.)
+2. **Phase 1:** **1c** — accept the residual, no structural change. Phase 1 is
+   a no-op for this effort; the ws-tolerant locator is the only defence and
+   Phases 2–3 mop up. Revisit 1a (with a sample measurement) only if extraction
+   is re-run at volume later.
+3. **Phase 3:** **D2** — flag for human, do not drop. Requires a schema change:
+   add a nullable column to `competency_text` (e.g. `note` for parity with
+   `competency_score.note`, or a dedicated `locate_status`). Update
+   `inst/narrate.sql` **and** migrate `local/narrate.db` (backup first, per §9).
+4. **Re-score:** only the reviews actually touched in Phases 2/3 (a
+   `text_match` changed, or a row flagged/removed). Phase 0 only adds
+   highlights — no re-score.
+5. **Phase 2 model:** write the code first, live-test on 1–2 reviews
+   (`gpt-5.1`), then submit the rest as a batch (`gpt-5.1-batch`) later.
+
+### Environment / template notes (verified 2026-09-08)
+
+- Canonical DB: `local/narrate.db`. API key `HMS_AZURE_API` via
+  `keyring::key_get()` (present), endpoint `https://azure-ai.hms.edu`.
+- `dev/reprocess_rule2_conflicts.R` is the Phase 4 driver template, but it runs
+  `5 → 6 → resolve → 3 → score`; paraphrase re-score has no conflict step, so
+  the driver must reset `5 → 3 → score` (drop the resolve stage).
+- `inst/prompt_comp_resolve.md` is the shape template for the new
+  `inst/prompt_comp_reanchor.md`.
+- Schema has no `review` table — join
+  `competency_text → competency_score → review_assignment` (rubric_id,
+  statusCode, reviewer_id live on `review_assignment`).
+- The scratchpad sizing script is gone; regenerate as `dev/size_paraphrase_na.R`
+  (it doubles as the Phase 0 dry run).
 
 ---
 

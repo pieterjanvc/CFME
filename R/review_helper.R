@@ -39,6 +39,22 @@ llm_build_resolve_body <- function(conflicts_text, prompt) {
   )
 }
 
+#' Build a responses API request body for competency-evidence re-anchoring
+#'
+#' @param reanchor_text Formatted input body from build_reanchor_items()$text
+#'   (the evaluation text followed by the numbered item list)
+#' @param prompt System prompt (re-anchor instructions, i.e. the contents of
+#'   inst/prompt_comp_reanchor.md)
+#' @returns Named list for use as a responses API body (model field excluded)
+llm_build_reanchor_body <- function(reanchor_text, prompt) {
+  list(
+    instructions = prompt,
+    input = paste0(reanchor_text, "\n\nRespond with JSON as instructed."),
+    text = list(format = list(type = "json_object")),
+    max_output_tokens = 3000L
+  )
+}
+
 #' Build a responses API request body for competency scoring
 #'
 #' @param extractions List of extraction items; each has cIndex (integer order
@@ -285,6 +301,80 @@ llm_comp_resolve <- function(
   )
 }
 
+#' Re-anchor paraphrased competency evidence to a verbatim span
+#'
+#' Calls the Azure responses API asking, for each non-verbatim quote, for the
+#' exact span of the evaluation it refers to (or `null`). Parses the JSON
+#' output into an anchors list. Shared by the live and batch re-anchor
+#' workflows, mirroring llm_comp_resolve()'s structure.
+#'
+#' @param reanchor_text Formatted input body (build_reanchor_items()$text)
+#' @param prompt System prompt (inst/prompt_comp_reanchor.md contents)
+#' @param model Azure deployment name. Default = "gpt-5.1"
+#' @param endpoint Azure endpoint base URL
+#' @param debug Return raw model output text as well. Default = FALSE
+#'
+#' @import httr2
+#' @importFrom jsonlite fromJSON
+#' @returns List with:
+#'   - statusCode: 0 API error, 1 parse error, 2 success (shared with
+#'     llm_comp_extract())
+#'   - data: list of anchor items on success (each has itemId and anchor,
+#'     anchor being a string or NULL), NULL otherwise
+#'   - tokens_in, tokens_out: integer token counts
+#'   - raw: raw response text if debug = TRUE, otherwise NULL
+#' @export
+llm_comp_reanchor <- function(
+  reanchor_text,
+  prompt,
+  model = "gpt-5.1",
+  endpoint = "https://azure-ai.hms.edu",
+  debug = FALSE
+) {
+  body <- llm_build_reanchor_body(reanchor_text, prompt)
+  body$model <- model
+
+  req <- request(paste0(endpoint, "/openai/v1/responses")) |>
+    req_headers(
+      "Content-Type" = "application/json",
+      "api-key" = Sys.getenv("HMS_AZURE_API")
+    ) |>
+    req_body_json(body) |>
+    req_error(is_error = ~FALSE) |>
+    req_perform()
+
+  if (resp_status(req) != 200) {
+    return(list(
+      statusCode = 0, data = NULL, tokens_in = NA, tokens_out = NA,
+      raw = if (debug) resp_body_string(req) else NULL
+    ))
+  }
+
+  resp <- resp_body_json(req)
+  raw_text <- resp$output[[1]]$content[[1]]$text
+  tokens_in <- resp$usage$input_tokens
+  tokens_out <- resp$usage$output_tokens
+
+  parsed <- tryCatch(
+    fromJSON(raw_text, simplifyVector = FALSE),
+    error = function(e) NULL
+  )
+
+  if (is.null(parsed) || !("anchors" %in% names(parsed))) {
+    return(list(
+      statusCode = 1, data = NULL,
+      tokens_in = tokens_in, tokens_out = tokens_out,
+      raw = if (debug) raw_text else NULL
+    ))
+  }
+
+  list(
+    statusCode = 2, data = parsed$anchors,
+    tokens_in = tokens_in, tokens_out = tokens_out,
+    raw = if (debug) raw_text else NULL
+  )
+}
+
 # ─── DB fetch helpers ─────────────────────────────────────────────────────────
 
 #' Blank out verbatim-repeated paragraphs within a single evaluation's text
@@ -525,6 +615,126 @@ db_fetch_review_resolve <- function(conn, review_ids, force = FALSE) {
   if (nrow(review_info) == 0) return(NULL)
 
   review_info
+}
+
+#' Fetch review info and unplaced competency evidence for the re-anchor step
+#'
+#' For each review, collects every `competency_text` row that has no located
+#' position (`start IS NULL`) - the paraphrased / unlocatable AI quotes - plus
+#' the evaluation text rendered the same way the extraction step saw it
+#' (`dbGetEvals(html = FALSE)` then `dedupe_repeated_paragraphs()`). Filters to
+#' `statusCode == 5` (Batch scoring complete) unless `force = TRUE`.
+#'
+#' Rows already flagged `locate_status = 'unlocated'` are still returned so a
+#' later run can retry them; `dbCompReanchorApply()` clears or re-sets the
+#' flag based on the new answer.
+#'
+#' @param conn DB connection
+#' @param review_ids Integer vector of review_assignment IDs
+#' @param force Skip the statusCode filter. Default = FALSE
+#'
+#' @import dplyr
+#' @returns Data frame with one row per review: `review_id`, `rubric_id`,
+#'   `evaluation` (character), and a list-column `items` (data frame:
+#'   `itemId`, `competency_text_id`, `competency_name`, `text`). Reviews with
+#'   no unplaced rows are dropped. NULL if there is nothing to process.
+db_fetch_review_reanchor <- function(conn, review_ids, force = FALSE) {
+  review_info <- tbl(conn, "review_assignment") |>
+    filter(id %in% local(review_ids)) |>
+    select(review_id = id, statusCode, rubric_id) |>
+    collect()
+
+  if (!force) {
+    if (nrow(filter(review_info, statusCode == 5)) == 0) {
+      warning(
+        "No review assignments at statusCode 5 (Batch scoring complete) ",
+        "among the given IDs. Use force = TRUE to reprocess."
+      )
+      return(NULL)
+    }
+    not_ready <- review_info$review_id[review_info$statusCode != 5]
+    if (length(not_ready) > 0) {
+      warning(
+        length(not_ready), " review_assignment(s) skipped (statusCode != 5): ",
+        paste(not_ready, collapse = ", ")
+      )
+      review_info <- filter(review_info, statusCode == 5)
+    }
+  }
+
+  review_info <- select(review_info, -statusCode)
+
+  na_rows <- tbl(conn, "competency_score") |>
+    filter(review_assignment_id %in% local(review_info$review_id)) |>
+    select(competency_score_id = id, review_id = review_assignment_id, competency_id) |>
+    inner_join(
+      tbl(conn, "competency_text") |>
+        filter(is.na(start)) |>
+        select(competency_text_id = id, competency_score_id, text_match),
+      by = "competency_score_id"
+    ) |>
+    inner_join(
+      tbl(conn, "competency") |> select(competency_id = id, competency_name = name),
+      by = "competency_id"
+    ) |>
+    select(review_id, competency_text_id, competency_name, text = text_match) |>
+    collect() |>
+    arrange(review_id, competency_text_id)
+
+  if (nrow(na_rows) == 0) {
+    warning("No unplaced competency_text rows among the given reviews.")
+    return(NULL)
+  }
+
+  review_info <- review_info[review_info$review_id %in% na_rows$review_id, , drop = FALSE]
+
+  # Evaluation text as the extraction step saw it (readable rendering, deduped)
+  ra_eval <- tbl(conn, "review_assignment") |>
+    filter(id %in% local(review_info$review_id)) |>
+    select(review_id = id, evaluation_id) |>
+    collect()
+
+  evals <- dbGetEvals(unique(ra_eval$evaluation_id), conn) |>
+    transmute(
+      evaluation_id,
+      evaluation = vapply(evaluation, dedupe_repeated_paragraphs, character(1))
+    )
+
+  review_info <- review_info |>
+    left_join(ra_eval, by = "review_id") |>
+    left_join(evals, by = "evaluation_id") |>
+    select(-evaluation_id)
+
+  review_info$items <- lapply(review_info$review_id, function(rid) {
+    rows <- na_rows[na_rows$review_id == rid, ]
+    data.frame(
+      itemId = seq_len(nrow(rows)),
+      competency_text_id = rows$competency_text_id,
+      competency_name = rows$competency_name,
+      text = rows$text,
+      stringsAsFactors = FALSE
+    )
+  })
+
+  review_info
+}
+
+#' Format the re-anchor request body for one review
+#'
+#' @param evaluation_text The evaluation text (readable rendering)
+#' @param items Data frame with `itemId`, `competency_name`, `text` (the
+#'   `items` list-column entry from db_fetch_review_reanchor())
+#' @returns Single character string: the evaluation text followed by the
+#'   numbered item list, ready to pass as llm_comp_reanchor()'s `reanchor_text`
+build_reanchor_items <- function(evaluation_text, items) {
+  item_lines <- sprintf(
+    "%d. [%s] %s",
+    items$itemId, items$competency_name, items$text
+  )
+  paste0(
+    "# EVALUATION TEXT\n\n", evaluation_text,
+    "\n\n# ITEMS TO RE-ANCHOR\n\n", paste(item_lines, collapse = "\n\n")
+  )
 }
 
 #' Fetch extracted competency texts for a set of review assignments

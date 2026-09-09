@@ -850,16 +850,11 @@ dbCompExtraction <- function(
 
   # Plain text (tag-stripped) the extracted quotes are matched against, in the
   # same coordinate space mod_highlight_server renders highlights against
-  plainText <- dbGetEvals(
-    ids = ra_info$evaluation_id,
-    conn = conn,
-    redacted = if (is.na(ra_info$redacted)) TRUE else as.logical(ra_info$redacted),
-    includeQuestions = TRUE,
-    html = TRUE,
-    subtitleTag = "b"
-  ) |>
-    pull(evaluation) |>
-    mod_highlight_strip_tags()
+  plainText <- db_locate_text(
+    conn,
+    review_assignment_id = ra_id,
+    redacted = ra_info$redacted
+  )
 
   # Locate every extracted quote up front (not per-competency) so matches
   # claim non-overlapping ranges across the whole review, not just within
@@ -923,6 +918,177 @@ dbCompExtraction <- function(
   }
 
   return(result)
+}
+
+#' Rebuild the tag-stripped evaluation text competency_text offsets live in
+#'
+#' `competency_text.start/end` are measured against the evaluation rendered
+#' with `dbGetEvals(html = TRUE, subtitleTag = "b")` and then tag-stripped -
+#' the exact string `mod_highlight_server` highlights against in
+#' `inst/review_app.R` (`evalText()`). Both `dbCompExtraction()` (at
+#' extraction time) and `dbRelocateCompText()` (for backfills) need that
+#' string; this keeps the two in lockstep.
+#'
+#' @param conn NARRATE database connection
+#' @param review_assignment_id Review assignment ID
+#' @param redacted (Optional) The review_assignment's `redacted` flag, if
+#'   already loaded; looked up when missing. `NA` is treated as `TRUE`.
+#'
+#' @import dplyr
+#'
+#' @returns A single tag-stripped character string.
+#' @keywords internal
+db_locate_text <- function(conn, review_assignment_id, redacted = NULL) {
+  ra_id <- review_assignment_id
+
+  ra_info <- tbl(conn, "review_assignment") |>
+    filter(id == local(ra_id)) |>
+    select(evaluation_id, redacted) |>
+    collect()
+
+  if (!is.null(redacted)) {
+    ra_info$redacted <- redacted
+  }
+
+  dbGetEvals(
+    ids = ra_info$evaluation_id,
+    conn = conn,
+    redacted = if (is.na(ra_info$redacted)) TRUE else as.logical(ra_info$redacted),
+    includeQuestions = TRUE,
+    html = TRUE,
+    subtitleTag = "b"
+  ) |>
+    pull(evaluation) |>
+    mod_highlight_strip_tags()
+}
+
+#' Backfill competency_text positions for AI evidence stored without one
+#'
+#' `mod_highlight_locate()` records `start/end = NA` when a quote can't be
+#' placed. Some of those are genuine paraphrases (the text is not in the
+#' evaluation), but others are verbatim - or whitespace-equivalent - quotes
+#' that were extracted before `mod_highlight_locate()` gained its
+#' whitespace-tolerant fallback, so a position was simply never written. This
+#' function recovers the second group. No LLM, no change to `text_match`,
+#' fully reversible from a database backup.
+#'
+#' For each affected review the review's **entire** `competency_text` set is
+#' re-located in insertion (`id`) order, reproducing the non-overlapping
+#' claim order `dbCompExtraction()` established, so a backfilled row claims a
+#' span consistent with the rows around it. By default only rows that were
+#' `NA` are written back; a row that already has a position is never moved
+#' and never reset to `NA` (pass `apply_moves = TRUE` to also rewrite
+#' already-located rows whose recomputed span differs - inspect the `moved`
+#' count from a `dry_run` first).
+#'
+#' @param conn NARRATE database connection
+#' @param review_assignment_ids (Optional) Restrict to these review
+#'   assignments. Default: every AI (`reviewer_id` 1) review with at least one
+#'   `competency_text` row whose `start` is `NULL`.
+#' @param apply_moves (Default = FALSE) Also write back already-located rows
+#'   whose recomputed position differs. When FALSE such rows are reported in
+#'   `moved` but left untouched.
+#' @param dry_run (Default = FALSE) Compute and return the report without
+#'   writing anything.
+#' @param commit (Default = TRUE) Commit the writes.
+#'
+#' @import dplyr
+#' @importFrom sqlife tbl_update
+#'
+#' @returns A data frame, one row per processed review assignment:
+#'   `review_assignment_id`, `n_text` (rows considered), `filled`
+#'   (`NA` -> located), `moved` (located -> different span), `still_na`
+#'   (`NA` before and still unplaceable), `written` (rows actually updated).
+#' @export
+dbRelocateCompText <- function(
+  conn,
+  review_assignment_ids = NULL,
+  apply_moves = FALSE,
+  dry_run = FALSE,
+  commit = TRUE
+) {
+  if (is.null(review_assignment_ids)) {
+    review_assignment_ids <- tbl(conn, "competency_text") |>
+      filter(is.na(start)) |>
+      inner_join(
+        tbl(conn, "competency_score") |> select(competency_score_id = id, review_assignment_id),
+        by = "competency_score_id"
+      ) |>
+      inner_join(
+        tbl(conn, "review_assignment") |>
+          filter(reviewer_id == 1L) |>
+          select(review_assignment_id = id),
+        by = "review_assignment_id"
+      ) |>
+      distinct(review_assignment_id) |>
+      pull(review_assignment_id)
+  }
+  review_assignment_ids <- sort(unique(as.integer(review_assignment_ids)))
+
+  report <- vector("list", length(review_assignment_ids))
+
+  for (k in seq_along(review_assignment_ids)) {
+    ra_id <- review_assignment_ids[k]
+
+    rows <- tbl(conn, "competency_text") |>
+      inner_join(
+        tbl(conn, "competency_score") |>
+          filter(review_assignment_id == local(ra_id)) |>
+          select(competency_score_id = id),
+        by = "competency_score_id"
+      ) |>
+      select(id, text_match, start, end) |>
+      collect() |>
+      arrange(id)
+
+    if (nrow(rows) == 0) {
+      report[[k]] <- data.frame(
+        review_assignment_id = ra_id, n_text = 0L,
+        filled = 0L, moved = 0L, still_na = 0L, written = 0L
+      )
+      next
+    }
+
+    plainText <- db_locate_text(conn, ra_id)
+    pos <- mod_highlight_locate(plainText, rows$text_match)
+
+    was_na <- is.na(rows$start)
+    now_na <- is.na(pos$start)
+    same_pos <- !was_na & !now_na & rows$start == pos$start & rows$end == pos$end
+
+    filled_idx <- which(was_na & !now_na)
+    moved_idx <- which(!was_na & !now_na & !same_pos)
+    still_na_idx <- which(was_na & now_na)
+
+    write_idx <- filled_idx
+    if (apply_moves) {
+      write_idx <- sort(c(write_idx, moved_idx))
+    }
+
+    report[[k]] <- data.frame(
+      review_assignment_id = ra_id,
+      n_text = nrow(rows),
+      filled = length(filled_idx),
+      moved = length(moved_idx),
+      still_na = length(still_na_idx),
+      written = if (dry_run) 0L else length(write_idx)
+    )
+
+    if (!dry_run && length(write_idx) > 0) {
+      tbl_update(
+        data.frame(
+          id = rows$id[write_idx],
+          start = pos$start[write_idx],
+          end = pos$end[write_idx]
+        ),
+        conn,
+        "competency_text",
+        commit = commit
+      )
+    }
+  }
+
+  bind_rows(report)
 }
 
 #' Check a review's extracted competencies for rule-2 ("one competency per
@@ -1338,6 +1504,181 @@ dbCompConflictResolve <- function(conn, clusters, resolutions, commit = TRUE) {
   }
 
   list(resolved = resolved, unresolved = unresolved)
+}
+
+#' Internal: locate a re-anchor span, tolerating a differing leading subject
+#'
+#' The re-anchor model reliably copies the body of a span but often keeps the
+#' paraphrase's subject word instead of the evaluation's - `She` for `she`,
+#' `[name_redact]` for `He`, and vice versa. When an exact (whitespace-
+#' tolerant) `mod_highlight_locate()` fails, this strips the anchor's first
+#' token, re-locates the remainder, and walks the match start left over
+#' whatever subject token actually precedes it in `plainText`.
+#'
+#' @param plainText Tag-stripped evaluation text (`db_locate_text()`)
+#' @param anchor The model's returned span
+#'
+#' @returns Length-2 integer vector `c(start, end)` (0-indexed, half-open) or
+#'   `NULL` if the span (or its subject-stripped remainder) isn't present.
+reanchor_locate <- function(plainText, anchor) {
+  p <- mod_highlight_locate(plainText, anchor)
+  if (!is.na(p$start[1])) return(c(p$start[1], p$end[1]))
+
+  rest <- sub(
+    "^\\s*(\\[[A-Za-z]*_redact\\]|[A-Za-z]+)[[:space:],]+", "", anchor,
+    perl = TRUE
+  )
+  if (identical(rest, anchor) || nchar(rest) < 15L) return(NULL)
+
+  p2 <- mod_highlight_locate(plainText, rest)
+  if (is.na(p2$start[1])) return(NULL)
+
+  s <- p2$start[1]
+  left <- substr(plainText, 1L, s)
+  m <- regexpr("(\\[[A-Za-z]*_redact\\]|[A-Za-z]+)[[:space:],]+$", left, perl = TRUE)
+  if (m > 0) s <- as.integer(m) - 1L
+  c(s, p2$end[1])
+}
+
+#' Apply LLM re-anchor answers to a review's unplaced competency evidence
+#'
+#' Phase 2 of the paraphrased-quote fix (dev/paraphrase_fix_plan.md). Given
+#' the model's answer - one verbatim span, or `null`, per unplaced
+#' `competency_text` row - this, per target row:
+#'   - locates the returned span in the review's locate text
+#'     (`db_locate_text()`, whitespace-tolerant via `mod_highlight_locate()`).
+#'     The answered anchors are located together in `itemId` order so two
+#'     paraphrases of the same quote don't claim the same span; already-located
+#'     rows are *not* seeded as prior claims and are never touched;
+#'   - on a hit: rewrites `text_match` to the anchor, sets `start`/`end`,
+#'     clears `locate_status`;
+#'   - on a miss (no answer, or the span isn't in the text): sets
+#'     `locate_status = 'unlocated'` and leaves the row unplaced for a human.
+#'
+#' Overlap with an existing quote from another competency is *not* prevented
+#' here - that is a legitimate rule-2 conflict, and `llm_comp_reanchor_run()`
+#' re-checks `dbCompExtractionCheckConflicts()` after applying and routes the
+#' review to the resolve step (statusCode 6) when one results.
+#'
+#' @param conn NARRATE database connection
+#' @param review_assignment_id Review assignment ID
+#' @param items Data frame mapping `itemId` -> `competency_text_id` (the
+#'   `items` list-column entry from `db_fetch_review_reanchor()`)
+#' @param anchors Parsed model answer (`llm_comp_reanchor()$data`): a list of
+#'   entries each with `itemId` and `anchor` (a string or `NULL`)
+#' @param commit (Default = TRUE)
+#'
+#' @import dplyr
+#' @importFrom sqlife tbl_update
+#'
+#' @returns A list with `summary` (named integer: `n_reanchored`,
+#'   `n_flagged`, `n_unanswered`) and `rows` (data frame: `competency_text_id`,
+#'   `itemId`, `outcome`, `start`, `end`).
+#' @export
+dbCompReanchorApply <- function(
+  conn,
+  review_assignment_id,
+  items,
+  anchors,
+  commit = TRUE
+) {
+  ra_id <- review_assignment_id
+
+  # itemId -> anchor string (NA for null / missing / blank)
+  ans <- setNames(
+    lapply(anchors, function(a) a$anchor),
+    vapply(anchors, function(a) as.character(a$itemId), character(1))
+  )
+  anchor_for <- function(itemId) {
+    v <- ans[[as.character(itemId)]]
+    if (is.null(v) || length(v) != 1 || is.na(v) || !nzchar(trimws(v))) {
+      return(NA_character_)
+    }
+    as.character(v)
+  }
+
+  plainText <- db_locate_text(conn, ra_id)
+
+  tgt <- data.frame(
+    itemId = items$itemId,
+    ct_id = items$competency_text_id,
+    stringsAsFactors = FALSE
+  )
+  tgt$anchor <- vapply(tgt$itemId, anchor_for, character(1))
+  tgt$answered <- !is.na(tgt$anchor)
+
+  # Each answered anchor is located independently (first verbatim occurrence,
+  # whitespace- and leading-subject-tolerant via reanchor_locate()). Already-
+  # located rows are NOT seeded as prior claims: a re-anchored quote whose
+  # span nests (or is nested by) another competency's existing quote is a
+  # legitimate rule-2 conflict, and llm_comp_reanchor_run() re-checks
+  # dbCompExtractionCheckConflicts() afterwards and routes such reviews to the
+  # resolve step (statusCode 6).
+  tgt$new_start <- NA_integer_
+  tgt$new_end <- NA_integer_
+  tgt$new_text <- NA_character_
+  for (i in which(tgt$answered)) {
+    hit <- reanchor_locate(plainText, tgt$anchor[i])
+    if (!is.null(hit)) {
+      tgt$new_start[i] <- hit[1]
+      tgt$new_end[i] <- hit[2]
+      tgt$new_text[i] <- substr(plainText, hit[1] + 1L, hit[2])
+    }
+  }
+
+  updates <- list()
+  flags <- integer(0)
+  out_rows <- vector("list", nrow(tgt))
+
+  for (i in seq_len(nrow(tgt))) {
+    ct_id <- tgt$ct_id[i]
+    win <- tgt$answered[i] && !is.na(tgt$new_start[i])
+
+    if (win) {
+      updates[[length(updates) + 1]] <- data.frame(
+        id = ct_id, text_match = tgt$new_text[i],
+        start = tgt$new_start[i], end = tgt$new_end[i],
+        locate_status = NA_character_
+      )
+      outcome <- "reanchored"
+    } else {
+      flags <- c(flags, ct_id)
+      outcome <- if (!tgt$answered[i]) "unanswered" else "not_verbatim"
+    }
+
+    out_rows[[i]] <- data.frame(
+      competency_text_id = ct_id,
+      itemId = tgt$itemId[i],
+      outcome = outcome,
+      start = if (win) tgt$new_start[i] else NA_integer_,
+      end = if (win) tgt$new_end[i] else NA_integer_
+    )
+  }
+
+  if (length(updates) > 0) {
+    tbl_update(
+      bind_rows(updates), conn, "competency_text",
+      returnData = FALSE, commit = FALSE
+    )
+  }
+  if (length(flags) > 0) {
+    tbl_update(
+      data.frame(id = unique(flags), locate_status = "unlocated"),
+      conn, "competency_text",
+      returnData = FALSE, commit = FALSE
+    )
+  }
+  if (commit) dbCommit(conn)
+
+  out_rows <- bind_rows(out_rows)
+  list(
+    summary = c(
+      n_reanchored = sum(out_rows$outcome == "reanchored"),
+      n_flagged = length(unique(flags)),
+      n_unanswered = sum(out_rows$outcome == "unanswered")
+    ),
+    rows = out_rows
+  )
 }
 
 #' Internal: filter a collected data frame to rows whose id is not already

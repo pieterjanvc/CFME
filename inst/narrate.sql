@@ -262,6 +262,7 @@ CREATE TABLE "competency_text" (
   "text_match" TEXT NOT NULL,
   "start" INTEGER,
   "end" INTEGER,
+  "locate_status" TEXT,  -- NULL = located or not yet processed; 'unlocated' = AI evidence not anchorable to a verbatim span, surfaced for human review
   FOREIGN KEY ("competency_score_id") REFERENCES "competency_score"("id") ON DELETE CASCADE
 );
 
@@ -289,6 +290,7 @@ INSERT INTO "status_codes" ("table", "code", "description", "note") VALUES
   ('review_assignment',  5, 'Batch scoring complete',     NULL),
   ('review_assignment',  6, 'Extraction conflict pending', 'Rule-2 ("one competency per quote") violation detected by dbCompExtractionCheckConflicts(); needs resolution'),
   ('review_assignment',  7, 'Conflict resolve batch submitted', 'Rule-2 conflict resolution submitted to batch (see llm_comp_resolve_batch_submit()); batch_resolve_process() moves it to 3, back to 6 for another round, or -4 if attempts exhausted'),
+  ('review_assignment',  8, 'Reanchor batch submitted', 'Paraphrased competency evidence submitted to batch (see llm_comp_reanchor_batch_submit()); batch_reanchor_process() moves it to 3, to 6 if a re-anchor created a rule-2 conflict, or back to 5 if nothing could be re-anchored (unplaced rows are flagged locate_status = ''unlocated'')'),
   -- batch
   ('batch', -3, 'Cancelled',   NULL),
   ('batch', -2, 'Expired',     NULL),
